@@ -1,0 +1,24 @@
+{
+  "info": "Debug on Windows requires as of now (Zig 0.14) setting the env variable LLDB_USE_NATIVE_PDB_READER=1 for lldb to kinda work. Stepping is unstable. The test debugging not reliable.",
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug",
+      "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI_Zig",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "zig build"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug-Test",
+      "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI_Zig-exe-test",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "zig build test"
+    }
+  ]
+}

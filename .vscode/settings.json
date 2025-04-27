@@ -1,0 +1,33 @@
+{
+    "debug.allowBreakpointsEverywhere": true,
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "editor.indentSize": "tabSize",
+    "editor.formatOnSave": true,
+    "zig.version": "0.14.0",
+    "[zig]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "ziglang.vscode-zig",
+        "files.eol": "\n",
+        "editor.tabSize": 4,
+        "editor.inlayHints.enabled": "on",
+        "editor.suggest.insertMode": "replace",
+        "editor.stickyScroll.defaultModel": "foldingProviderModel",
+        "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+        }
+    },
+    "zig.zls.warnStyle": true,
+    "zig.zls.enabled": "on",
+    "editor.semanticTokenColorCustomizations": {
+        "rules": {
+            "*.deprecated": {
+                "strikethrough": true
+            }
+        }
+    },
+    "files.insertFinalNewline": true,
+    "files.encoding": "utf8",
+    "files.eol": "\n"
+}
