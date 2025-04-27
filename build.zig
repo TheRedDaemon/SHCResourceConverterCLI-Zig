@@ -23,6 +23,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .single_threaded = single_threaded,
     });
+
+    addDependencies(b, exe_mod);
+
     const exe = b.addExecutable(.{
         .name = exe_name,
         .root_module = exe_mod,
@@ -59,4 +62,10 @@ pub fn build(b: *std.Build) void {
     if (!only_emit_test) {
         test_step.dependOn(&run_exe_unit_tests.step);
     }
+}
+
+fn addDependencies(b: *std.Build, exe_mod: *std.Build.Module) void {
+    // argument parser
+    const clap = b.dependency("clap", .{});
+    exe_mod.addImport("clap", clap.module("clap"));
 }
