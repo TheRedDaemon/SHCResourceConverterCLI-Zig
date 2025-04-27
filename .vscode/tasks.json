@@ -15,7 +15,8 @@
       "command": "zig",
       "args": [
         "build",
-        "test"
+        "test",
+        "-Donly-emit-test=true",
       ]
     }
   ]
