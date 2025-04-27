@@ -1,9 +1,14 @@
 const std = @import("std");
 
-const source_dir = "src";
-const main_file = "main.zig";
-const exe_name = "SHCResourceConverterCLI-Zig";
-const test_exe_suffix = "test";
+const names = .{
+    .source_dir = "src",
+    .main_file = "main.zig",
+    .exe_name = "SHCResourceConverterCLI-Zig",
+    .test_exe_suffix = "test",
+};
+
+// currently duplicate from zig zon, see: https://github.com/vezel-dev/graf/issues/15
+const version = "0.0.1";
 
 const single_threaded = true; // since it should be a simple cli
 
@@ -18,7 +23,7 @@ pub fn build(b: *std.Build) void {
     ) orelse false;
 
     const exe_mod = b.createModule(.{
-        .root_source_file = b.path(b.pathJoin(&.{ source_dir, main_file })),
+        .root_source_file = b.path(b.pathJoin(&.{ names.source_dir, names.main_file })),
         .target = target,
         .optimize = optimize,
         .single_threaded = single_threaded,
@@ -27,7 +32,7 @@ pub fn build(b: *std.Build) void {
     addDependencies(b, exe_mod);
 
     const exe = b.addExecutable(.{
-        .name = exe_name,
+        .name = names.exe_name,
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
@@ -50,7 +55,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const exe_unit_tests = b.addTest(.{
-        .name = b.fmt("{s}-{s}", .{ exe_name, test_exe_suffix }),
+        .name = b.fmt("{s}-{s}", .{ names.exe_name, names.test_exe_suffix }),
         .root_module = exe_mod,
     });
     const install_exe_unit_tests = b.addInstallArtifact(exe_unit_tests, .{});
@@ -68,4 +73,12 @@ fn addDependencies(b: *std.Build, exe_mod: *std.Build.Module) void {
     // argument parser
     const clap = b.dependency("clap", .{});
     exe_mod.addImport("clap", clap.module("clap"));
+}
+
+fn addConfig(b: *std.Build, exe_mod: *std.Build.Module) void {
+    const options = b.addOptions();
+
+    options.addOption([]const u8, "version", version);
+
+    exe_mod.addOptions("config", options);
 }

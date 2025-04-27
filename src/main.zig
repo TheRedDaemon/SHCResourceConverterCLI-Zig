@@ -1,45 +1,32 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
+//! A simple CLI to support analysis of SHC files.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
-const clap = @import("clap");
-
-pub fn main() !void {
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    std.debug.print("All your {s} are belong to us.\n", .{"codebase"});
-
-    // stdout is for the actual output of your application, for example if you
-    // are implementing gzip, then only the compressed bytes should be sent to
-    // stdout, not any debugging messages.
-    const stdout_file = std.io.getStdOut().writer();
-    var bw = std.io.bufferedWriter(stdout_file);
-    const stdout = bw.writer();
-
-    try stdout.print("Run `zig build test` to run the tests. Also, here is a number: {d}\n", .{add(1, 2)});
-
-    try bw.flush(); // Don't forget to flush!
+pub fn main() void {
+    runWithAllocator(void, internalMain);
 }
 
-fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
-
-test "simple test" {
-    var list = std.ArrayList(i32).init(std.testing.allocator);
-    defer list.deinit(); // Try commenting this out and see if zig detects the memory leak!
-    try list.append(42);
-    try std.testing.expectEqual(@as(i32, 42), list.pop());
-}
-
-test "fuzz example" {
-    const Context = struct {
-        fn testOne(context: @This(), input: []const u8) anyerror!void {
-            _ = context;
-            // Try passing `--fuzz` to `zig build test` and see if it manages to fail this test case!
-            try std.testing.expect(!std.mem.eql(u8, "canyoufindme", input));
-        }
+/// Run a param less function with an allocator depending on the build type.
+/// The allocator might be de-initialized after the function returns,
+/// however, all allocations and frees need to be handled by the user.
+fn runWithAllocator(comptime R: type, comptime func: fn (allocator: std.mem.Allocator) R) R {
+    var allocator_handle = switch (builtin.mode) {
+        .Debug => std.heap.DebugAllocator(.{}).init,
+        else => std.heap.ArenaAllocator.init(std.heap.page_allocator),
     };
-    try std.testing.fuzz(Context{}, Context.testOne, .{});
+    defer switch (builtin.mode) {
+        .Debug => if (allocator_handle.deinit() != .ok) @panic("Memory leak detected!"),
+        else => allocator_handle.deinit(),
+    };
+    return switch (@typeInfo(R)) {
+        .error_union => try func(allocator_handle.allocator()),
+        else => func(allocator_handle.allocator()),
+    };
+}
+
+fn internalMain(allocator: std.mem.Allocator) void {
+    const buf = allocator.alloc(u8, 100) catch unreachable;
+    defer allocator.free(buf);
+    std.debug.print("Hello, {}!\n", .{0});
 }
