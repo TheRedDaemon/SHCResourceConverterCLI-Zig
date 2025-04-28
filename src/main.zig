@@ -2,9 +2,10 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-
 const arguments = @import("arguments.zig");
-pub const std_options = arguments.std_options;
+const logging = @import("logging.zig");
+
+pub const std_options = logging.std_options;
 
 // external to easier set log level
 pub fn main() void {
@@ -30,6 +31,6 @@ fn runWithAllocator(comptime R: type, comptime func: fn (allocator: std.mem.Allo
 }
 
 fn internalMain(allocator: std.mem.Allocator) void {
-    const args = arguments.parseArgs(allocator) catch unreachable;
-    _ = args;
+    const args = arguments.parseArgs(allocator) catch unreachable; // TODO: handle errors
+    logging.setLogLevel(args.log_level);
 }

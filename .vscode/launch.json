@@ -1,7 +1,9 @@
 {
-  "info": "Debug on Windows requires as of now (Zig 0.14) setting the env variable LLDB_USE_NATIVE_PDB_READER=1 for lldb to kinda work. Stepping is unstable. The test debugging not reliable.",
   "version": "0.2.0",
   "configurations": [
+    // Debug via lldb on Windows requires as of now (Zig 0.14) setting the env variable LLDB_USE_NATIVE_PDB_READER=1 for lldb to kinda work.
+    // Stepping is unstable. The test debugging not reliable.
+    // Requires a setup lldb extension like CodeLLDB.
     {
       "type": "lldb",
       "request": "launch",
@@ -15,6 +17,25 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug-Test",
+      "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI-Zig-test",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "zig build test"
+    },
+    // Using 'cppvsdbg' as type with the official C++ extension installed allows ok debugging.
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Windows-Debug",
+      "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI-Zig",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "zig build"
+    },
+    {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Windows-Debug-Test",
       "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI-Zig-test",
       "args": [],
       "cwd": "${workspaceFolder}",

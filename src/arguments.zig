@@ -5,39 +5,8 @@ const config = @import("config");
 
 const types = @import("types.zig");
 
-// log handling placed here, to allow directly setting the log level
-// source: https://ziggit.dev/t/set-debug-level-at-runtime/6196/4
-
-pub const std_options: std.Options = .{
-    .logFn = LogSupport.logFn,
-    .log_level = .debug,
-};
-
-const LogSupport = struct {
-    var log_level = std.log.default_level;
-
-    fn logFn(
-        comptime message_level: std.log.Level,
-        comptime scope: @TypeOf(.enum_literal),
-        comptime format: []const u8,
-        args: anytype,
-    ) void {
-        if (@intFromEnum(message_level) <= @intFromEnum(log_level)) {
-            std.log.defaultLog(message_level, scope, format, args);
-        }
-    }
-};
-
-// start of actual argument handling
-
-const ActionCommand = enum {
-    @"test",
-    extract,
-    pack,
-};
-
 const parsers = .{
-    .command = clap.parsers.enumeration(ActionCommand),
+    .command = clap.parsers.enumeration(types.ActionCommand),
     .log_level = clap.parsers.enumeration(std.log.Level),
     .u8 = clap.parsers.int(u8, 0),
     .bool = parseBoolArg,
@@ -72,11 +41,17 @@ const params = clap.parseParamsComptime(
     \\
 );
 
-pub const Args = struct {
-    action: ActionCommand,
+const Args = struct {
+    log_level: std.log.Level,
+    action: types.ActionCommand,
+    print_tgx_to_text: bool,
+    tgx_coder_transparent_pixel_tgx_color: types.Argb1555,
+    tgx_coder_transparent_pixel_raw_color: types.Argb1555,
+    tgx_coder_pixel_repeat_threshold: u8,
+    tgx_coder_padding_alignment: u8,
 };
 
-pub fn parseArgs(allocator: std.mem.Allocator) !?Args {
+pub fn parseArgs(allocator: std.mem.Allocator) !Args {
     var diag = clap.Diagnostic{};
     var res = clap.parse(clap.Help, &params, parsers, .{
         .diagnostic = &diag,
@@ -87,18 +62,18 @@ pub fn parseArgs(allocator: std.mem.Allocator) !?Args {
     };
     defer res.deinit();
 
-    // if (res.args.help != 0)
-    //     std.debug.print("--help\n", .{});
-    // if (res.args.number) |n|
-    //     std.debug.print("--number = {}\n", .{n});
-    // if (res.args.answer) |a|
-    //     std.debug.print("--answer = {s}\n", .{@tagName(a)});
-    // for (res.args.string) |s|
-    //     std.debug.print("--string = {s}\n", .{s});
-    // for (res.positionals[0]) |pos|
-    //     std.debug.print("{s}\n", .{pos});
+    // TODO: version and help
 
-    return null;
+    const action = res.positionals[0] orelse .@"test"; // TODO: return error.MissingAction;
+    return .{
+        .log_level = res.args.log orelse .info,
+        .action = action,
+        .print_tgx_to_text = res.args.@"print-tgx-to-text" orelse false,
+        .tgx_coder_transparent_pixel_tgx_color = res.args.@"tgx-coder-transparent-pixel-tgx-color" orelse types.default_game_transparent_color,
+        .tgx_coder_transparent_pixel_raw_color = res.args.@"tgx-coder-transparent-pixel-raw-color" orelse types.default_tgx_file_transparent,
+        .tgx_coder_pixel_repeat_threshold = res.args.@"tgx-coder-pixel-repeat-threshold" orelse types.default_tgx_file_pixel_repeat_threshold,
+        .tgx_coder_padding_alignment = res.args.@"tgx-coder-padding-alignment" orelse types.default_tgx_file_padding_alignment,
+    };
 }
 
 fn printErrorToLog(comptime format: []const u8, args: anytype) !void {

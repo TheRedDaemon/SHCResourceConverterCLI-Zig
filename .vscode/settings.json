@@ -14,7 +14,8 @@
         "editor.suggest.insertMode": "replace",
         "editor.stickyScroll.defaultModel": "foldingProviderModel",
         "editor.codeActionsOnSave": {
-            "source.organizeImports": "explicit"
+            // disablled, since it pulls globals to the top of the file
+            // "source.organizeImports": "explicit"
             // Run code actions that currently supports adding and removing discards.
             // "source.fixAll": "explicit",
         }
