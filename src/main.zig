@@ -31,6 +31,18 @@ fn runWithAllocator(comptime R: type, comptime func: fn (allocator: std.mem.Allo
 }
 
 fn internalMain(allocator: std.mem.Allocator) void {
-    const args = arguments.parseArgs(allocator) catch unreachable; // TODO: handle errors
-    logging.setLogLevel(args.log_level);
+    const result = arguments.parseArgs(allocator) catch |err| {
+        std.log.err("Failed to parse arguments: {s}", .{@errorName(err)});
+        return;
+    };
+    const log_level, const args = switch (result) {
+        .no_action => |level| {
+            logging.setLogLevel(level);
+            std.log.debug("Requested actionless print actions. Ending process.", .{});
+            return;
+        },
+        .action => result.action,
+    };
+    logging.setLogLevel(log_level);
+    std.log.debug("{}", .{args});
 }

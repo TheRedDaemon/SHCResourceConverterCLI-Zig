@@ -30,6 +30,7 @@ pub fn build(b: *std.Build) void {
     });
 
     addDependencies(b, exe_mod);
+    addConfig(b, exe_mod);
 
     const exe = b.addExecutable(.{
         .name = names.exe_name,

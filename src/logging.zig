@@ -16,6 +16,7 @@ fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    // TODO: improve message formatting
     if (@intFromEnum(message_level) <= @intFromEnum(log_level)) {
         std.log.defaultLog(message_level, scope, format, args);
     }
