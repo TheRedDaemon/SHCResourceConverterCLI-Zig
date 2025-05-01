@@ -46,3 +46,9 @@ fn internalMain(allocator: std.mem.Allocator) void {
     logging.setLogLevel(log_level);
     std.log.debug("{}", .{args});
 }
+
+// currently required to run tests in all imported files
+// see: https://github.com/ziglang/zig/issues/16349
+test {
+    std.testing.refAllDecls(@This());
+}

@@ -51,10 +51,10 @@ pub fn parseArgs(allocator: std.mem.Allocator) !ParsingResult {
     var iter = try std.process.ArgIterator.initWithAllocator(allocator);
     defer iter.deinit();
 
-    return parseArgsInternal(allocator, &iter);
+    return internalParseArgs(allocator, &iter);
 }
 
-fn parseArgsInternal(allocator: std.mem.Allocator, arg_iterator_ptr: anytype) !ParsingResult {
+fn internalParseArgs(allocator: std.mem.Allocator, arg_iterator_ptr: anytype) !ParsingResult {
     // remove exe name
     _ = arg_iterator_ptr.next();
 
@@ -108,4 +108,58 @@ fn parseArgsInternal(allocator: std.mem.Allocator, arg_iterator_ptr: anytype) !P
     };
 }
 
-// TODO: write test
+test "fail argument parsing" {
+    const arg_str = "exe tet"; // misspelled command
+    var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
+    const args = internalParseArgs(std.testing.allocator, &arg_iter);
+    const has_error = if (args) |_| false else |_| true;
+    try std.testing.expect(has_error);
+}
+
+test "call without command" {
+    const arg_str = "exe --version";
+    var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
+    const args = try internalParseArgs(std.testing.allocator, &arg_iter);
+    switch (args) {
+        .no_action => try std.testing.expect(true),
+        else => try std.testing.expect(false),
+    }
+}
+
+test "call with all command" {
+    const test_result: ParsingResult = .{
+        .action = .{
+            .debug,
+            .{
+                .action = .@"test",
+                .print_tgx_to_text = true,
+                .tgx_coder_transparent_pixel_tgx_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
+                .tgx_coder_transparent_pixel_raw_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
+                .tgx_coder_pixel_repeat_threshold = 2,
+                .tgx_coder_padding_alignment = 2,
+            },
+        },
+    };
+
+    const arg_str = std.fmt.comptimePrint(
+        "exe " ++
+            "--log={s} {s} --print-tgx-to-text " ++
+            "--tgx-coder-transparent-pixel-tgx-color 0b{b} " ++
+            "--tgx-coder-transparent-pixel-raw-color 0b{b}" ++
+            " --tgx-coder-pixel-repeat-threshold {d} --tgx-coder-padding-alignment {d}",
+        .{
+            comptime std.enums.tagName(std.log.Level, test_result.action.@"0").?,
+            comptime std.enums.tagName(types.ActionCommand, test_result.action.@"1".action).?,
+            @as(u16, @bitCast(test_result.action.@"1".tgx_coder_transparent_pixel_tgx_color)),
+            @as(u16, @bitCast(test_result.action.@"1".tgx_coder_transparent_pixel_raw_color)),
+            test_result.action.@"1".tgx_coder_pixel_repeat_threshold,
+            test_result.action.@"1".tgx_coder_padding_alignment,
+        },
+    );
+    var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
+    const args = try internalParseArgs(std.testing.allocator, &arg_iter);
+    switch (args) {
+        .action => try std.testing.expectEqualDeep(test_result, args),
+        else => try std.testing.expect(false),
+    }
+}

@@ -9,10 +9,10 @@ pub const ActionCommand = enum {
 // resource elements
 
 pub const Argb1555 = packed struct {
-    blue: u5,
-    green: u5,
-    red: u5,
-    alpha: u1,
+    b: u5,
+    g: u5,
+    r: u5,
+    a: u1,
 };
 
 // tgx coder
