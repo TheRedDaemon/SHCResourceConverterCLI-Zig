@@ -28,6 +28,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .single_threaded = single_threaded,
     });
+    // note: only ReleaseSmall strips debug symbols by default, which will make it a lot smaller then the other targets
 
     addDependencies(b, exe_mod);
     addConfig(b, exe_mod);

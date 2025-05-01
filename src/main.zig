@@ -35,7 +35,7 @@ fn internalMain(allocator: std.mem.Allocator) void {
         std.log.err("Failed to parse arguments: {s}", .{@errorName(err)});
         return;
     };
-    const log_level, const args = switch (result) {
+    const log_level, const coder_options, const action_args = switch (result) {
         .no_action => |level| {
             logging.setLogLevel(level);
             std.log.debug("Requested actionless print actions. Ending process.", .{});
@@ -43,8 +43,14 @@ fn internalMain(allocator: std.mem.Allocator) void {
         },
         .action => result.action,
     };
+    defer action_args.deinit(allocator);
     logging.setLogLevel(log_level);
-    std.log.debug("{}", .{args});
+
+    logging.logAsJson(.debug, allocator, .{
+        .log_level = log_level,
+        .coder_options = coder_options,
+        .action_args = action_args,
+    });
 }
 
 // currently required to run tests in all imported files

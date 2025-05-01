@@ -31,3 +31,19 @@ fn logFn(
     const scope_txt = comptime if (scope == .default) "" else "(" ++ @tagName(scope) ++ ") ";
     io.stderr(true, level_txt ++ " | " ++ scope_txt ++ format ++ "\n", args);
 }
+
+pub fn logAsJson(comptime message_level: std.log.Level, allocator: std.mem.Allocator, value: anytype) void {
+    if (@intFromEnum(message_level) > @intFromEnum(log_level)) {
+        return;
+    }
+    const json = std.json.stringifyAlloc(
+        allocator,
+        value,
+        .{ .whitespace = .indent_2 },
+    ) catch |err| {
+        std.log.err("Failed to log json: {s}", .{@errorName(err)});
+        return;
+    };
+    defer allocator.free(json);
+    logFn(message_level, .default, "{s}:\n{s}", .{ @typeName(@TypeOf(value)), json });
+}
