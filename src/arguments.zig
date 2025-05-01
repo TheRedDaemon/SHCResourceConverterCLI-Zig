@@ -25,7 +25,7 @@ const params = clap.parseParamsComptime(std.fmt.comptimePrint(
     \\-v, --version  Display version information and exit.
     \\--log <log_level>  Set the log level. Possible values: {s} (default: info)
     \\<command>  Actual action to perform. Possible values: {s}
-    \\--print-tgx-to-text <bool>  Print a text of the TGX encoding after analysis. (default: false)
+    \\--print-tgx-to-text  Print a text of the TGX encoding after analysis.
     \\--tgx-coder-transparent-pixel-tgx-color <argb1555>  Transparent pixel color used the TGX encoding. Unknown usage. (default: 0b1111100000011111)
     \\--tgx-coder-transparent-pixel-raw-color <argb1555>  Transparent pixel color used for alpha in raw data. (default: 0)
     \\--tgx-coder-pixel-repeat-threshold <u8>  Number of repeated pixels required to be considered a repeat. (default: 3)
@@ -39,19 +39,8 @@ const parsers = .{
     .command = clap.parsers.enumeration(types.ActionCommand),
     .log_level = clap.parsers.enumeration(std.log.Level),
     .u8 = clap.parsers.int(u8, 0),
-    .bool = parseBoolArg,
     .argb1555 = parseArgb1555Arg,
 };
-
-fn parseBoolArg(in: []const u8) !bool {
-    if (std.mem.eql(u8, in, "true")) {
-        return true;
-    } else if (std.mem.eql(u8, in, "false")) {
-        return false;
-    } else {
-        return error.InvalidBool;
-    }
-}
 
 fn parseArgb1555Arg(in: []const u8) !types.Argb1555 {
     const number = try std.fmt.parseInt(u16, in, 0);
@@ -59,12 +48,29 @@ fn parseArgb1555Arg(in: []const u8) !types.Argb1555 {
 }
 
 pub fn parseArgs(allocator: std.mem.Allocator) !ParsingResult {
+    var iter = try std.process.ArgIterator.initWithAllocator(allocator);
+    defer iter.deinit();
+
+    return parseArgsInternal(allocator, &iter);
+}
+
+fn parseArgsInternal(allocator: std.mem.Allocator, arg_iterator_ptr: anytype) !ParsingResult {
+    // remove exe name
+    _ = arg_iterator_ptr.next();
+
     var diag = clap.Diagnostic{};
-    var res = clap.parse(clap.Help, &params, parsers, .{
-        .diagnostic = &diag,
-        .allocator = allocator,
-    }) catch |err| {
+    var res = clap.parseEx(
+        clap.Help,
+        &params,
+        parsers,
+        arg_iterator_ptr,
+        .{
+            .diagnostic = &diag,
+            .allocator = allocator,
+        },
+    ) catch |err| {
         diag.report(io.getStdErr(), err) catch std.log.err("Unable to write failure .", .{});
+        io.flushErr();
         return err;
     };
     defer res.deinit();
@@ -72,16 +78,18 @@ pub fn parseArgs(allocator: std.mem.Allocator) !ParsingResult {
     const log_level = res.args.log orelse .info;
     if (res.args.help != 0) {
         try clap.help(io.getStdErr(), clap.Help, &params, .{});
+        io.stderr(true, "\n", .{});
         return .{ .no_action = log_level };
     }
 
     if (res.args.version != 0) {
-        io.stderr("{}", .{semver});
+        io.stderr(true, "{}\n", .{semver});
         return .{ .no_action = log_level };
     }
 
     if (res.positionals[0] == null) {
         try clap.usage(io.getStdErr(), clap.Help, &params);
+        io.stderr(true, "\n", .{});
         return .{ .no_action = log_level };
     }
 
@@ -90,7 +98,7 @@ pub fn parseArgs(allocator: std.mem.Allocator) !ParsingResult {
             log_level,
             .{
                 .action = res.positionals[0].?,
-                .print_tgx_to_text = res.args.@"print-tgx-to-text" orelse false,
+                .print_tgx_to_text = res.args.@"print-tgx-to-text" != 0,
                 .tgx_coder_transparent_pixel_tgx_color = res.args.@"tgx-coder-transparent-pixel-tgx-color" orelse types.default_game_transparent_color,
                 .tgx_coder_transparent_pixel_raw_color = res.args.@"tgx-coder-transparent-pixel-raw-color" orelse types.default_tgx_file_transparent,
                 .tgx_coder_pixel_repeat_threshold = res.args.@"tgx-coder-pixel-repeat-threshold" orelse types.default_tgx_file_pixel_repeat_threshold,
@@ -100,4 +108,4 @@ pub fn parseArgs(allocator: std.mem.Allocator) !ParsingResult {
     };
 }
 
-// TODO: parsing test
+// TODO: write test
