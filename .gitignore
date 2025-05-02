@@ -1,2 +1,8 @@
 .zig-cache/
 zig-out/
+
+# Do not commit test data.
+test_data/*
+
+# Always keep .gitkeep
+!.gitkeep

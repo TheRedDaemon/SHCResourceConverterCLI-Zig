@@ -5,8 +5,17 @@ const std = @import("std");
 pub const CoderOptions = struct {
     transparent_pixel_tgx_color: Argb1555,
     transparent_pixel_raw_color: Argb1555,
+    transparent_pixel_fill_index: Gray8,
     pixel_repeat_threshold: u8,
     padding_alignment: u8,
+
+    pub const default = CoderOptions{
+        .transparent_pixel_tgx_color = @bitCast(@as(u16, 0b1111100000011111)), // used by game for some cases (repeating pixels seem excluded?)
+        .transparent_pixel_raw_color = @bitCast(@as(u16, 0)), // for placing transparency and identification of it
+        .transparent_pixel_fill_index = 0, // for placing an index in the the raw output
+        .pixel_repeat_threshold = 3,
+        .padding_alignment = 4,
+    };
 };
 
 pub const ActionCommand = enum {
@@ -57,9 +66,41 @@ pub const Argb1555 = packed struct {
     a: u1,
 };
 
-// tgx coder
+pub const Gray8 = u8;
 
-pub const default_game_transparent_color: Argb1555 = @bitCast(@as(u16, 0b1111100000011111)); // used by game for some cases (repeating pixels seem excluded?)
-pub const default_tgx_file_transparent: Argb1555 = @bitCast(@as(u16, 0)); // for placing transparency and identification of it
-pub const default_tgx_file_pixel_repeat_threshold: u8 = 3;
-pub const default_tgx_file_padding_alignment: u8 = 4;
+pub const Alpha1 = u1;
+
+// tgx coder analysis
+
+const TgxAnalysisMarker = struct {
+    marker_count: usize,
+    pixel_count: usize,
+};
+
+const TgxAnalysisNewline = struct {
+    normal_marker_count: usize,
+    newline_without_marker_count: usize,
+    unfinished_width_pixel_count: usize,
+    padding_marker_count: usize,
+};
+
+pub const TgxAnalysis = struct {
+    pixel: TgxAnalysisMarker,
+    transparent: TgxAnalysisMarker,
+    repeating: TgxAnalysisMarker,
+    newline: TgxAnalysisNewline,
+    color_pixel_with_alpha_zero: usize,
+
+    pub const empty: TgxAnalysis = .{
+        .pixel = .{ .marker_count = 0, .pixel_count = 0 },
+        .transparent = .{ .marker_count = 0, .pixel_count = 0 },
+        .repeating = .{ .marker_count = 0, .pixel_count = 0 },
+        .newline = .{
+            .normal_marker_count = 0,
+            .newline_without_marker_count = 0,
+            .unfinished_width_pixel_count = 0,
+            .padding_marker_count = 0,
+        },
+        .color_pixel_with_alpha_zero = 0,
+    };
+};

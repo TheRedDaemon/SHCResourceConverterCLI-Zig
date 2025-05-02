@@ -2,6 +2,7 @@ const std = @import("std");
 
 // found not other way but explicitly set type
 const BufferedWriter = std.io.BufferedWriter(4096, std.fs.File.Writer);
+pub const Writer = BufferedWriter.Writer;
 
 var stdout_buffered_writer: ?BufferedWriter = null;
 pub fn getStdOut() BufferedWriter.Writer {

@@ -17,6 +17,7 @@
         "build",
         "test",
         "-Donly-emit-test=true",
+        "-Dtest-data-present=true"
       ]
     }
   ]

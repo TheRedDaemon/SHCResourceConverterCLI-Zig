@@ -1,5 +1,10 @@
 const std = @import("std");
 
+const Config = struct {
+    version: []const u8,
+    test_data_present: bool,
+};
+
 const names = .{
     .source_dir = "src",
     .main_file = "main.zig",
@@ -21,6 +26,12 @@ pub fn build(b: *std.Build) void {
         "only-emit-test",
         "Only emit test exes on test builds. Do not execute them.",
     ) orelse false;
+    const test_data_present = b.option(
+        bool,
+        "test-data-present",
+        "Indicates that the test data files are present and " ++
+            "the tests using them should be executed.",
+    ) orelse false;
 
     const exe_mod = b.createModule(.{
         .root_source_file = b.path(b.pathJoin(&.{ names.source_dir, names.main_file })),
@@ -31,7 +42,10 @@ pub fn build(b: *std.Build) void {
     // note: only ReleaseSmall strips debug symbols by default, which will make it a lot smaller then the other targets
 
     addDependencies(b, exe_mod);
-    addConfig(b, exe_mod);
+    addConfig(b, exe_mod, &.{
+        .version = version,
+        .test_data_present = test_data_present,
+    });
 
     const exe = b.addExecutable(.{
         .name = names.exe_name,
@@ -77,10 +91,12 @@ fn addDependencies(b: *std.Build, exe_mod: *std.Build.Module) void {
     exe_mod.addImport("clap", clap.module("clap"));
 }
 
-fn addConfig(b: *std.Build, exe_mod: *std.Build.Module) void {
+fn addConfig(b: *std.Build, exe_mod: *std.Build.Module, config: *const Config) void {
     const options = b.addOptions();
 
-    options.addOption([]const u8, "version", version);
+    inline for (@typeInfo(std.meta.Child(@TypeOf(config))).@"struct".fields) |*field| {
+        options.addOption(field.type, field.name, @field(config, field.name));
+    }
 
     exe_mod.addOptions("config", options);
 }

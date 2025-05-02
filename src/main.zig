@@ -53,6 +53,10 @@ fn internalMain(allocator: std.mem.Allocator) void {
             .action_args = action_args,
         });
     }
+
+    // TODO: add proper function handling
+    _ = @import("coder/tgx_coder.zig").analyze(u8, "", 0, 0, &coder_options) catch unreachable;
+    _ = @import("coder/tgx_coder.zig").decode(u8, allocator, "", 0, 0, &coder_options) catch unreachable;
 }
 
 // currently required to run tests in all imported files

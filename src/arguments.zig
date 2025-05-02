@@ -28,10 +28,11 @@ const main_params = clap.parseParamsComptime(std.fmt.comptimePrint(
     \\-h, --help  Display this help and exit.
     \\-v, --version  Display version information and exit.
     \\--log <log_level>  Set the log level. Possible values: {s} (default: info)
-    \\--tgx-coder-transparent-pixel-tgx-color <argb1555>  Transparent pixel color used the TGX encoding. Unknown usage. (default: 0b1111100000011111)
-    \\--tgx-coder-transparent-pixel-raw-color <argb1555>  Transparent pixel color used for alpha in raw data. (default: 0)
-    \\--tgx-coder-pixel-repeat-threshold <u8>  Number of repeated pixels required to be considered a repeat. (default: 3)
-    \\--tgx-coder-padding-alignment <u8>  Byte alignment to use for the padding. (default: 4)
+    \\--transparent-pixel-tgx-color <argb1555>  Transparent pixel color used the TGX encoding. Unknown usage. (default: 0b1111100000011111)
+    \\--transparent-pixel-raw-color <argb1555>  Transparent pixel color used for alpha in raw data. (default: 0)
+    \\--transparent-pixel-fill-index <u8>  Color index used for index images if the pixel is transparent. (default: 0)
+    \\--pixel-repeat-threshold <u8>  Number of repeated pixels required to be considered a repeat. (default: 3)
+    \\--padding-alignment <u8>  Byte alignment to use for the padding. (default: 4)
     \\<command>  Actual action to perform. Possible values: {s}
     \\
 ,
@@ -119,10 +120,11 @@ fn internalParseArgs(allocator: std.mem.Allocator, arg_iterator_ptr: anytype) !P
         .action = .{
             log_level,
             .{
-                .transparent_pixel_tgx_color = res.args.@"tgx-coder-transparent-pixel-tgx-color" orelse types.default_game_transparent_color,
-                .transparent_pixel_raw_color = res.args.@"tgx-coder-transparent-pixel-raw-color" orelse types.default_tgx_file_transparent,
-                .pixel_repeat_threshold = res.args.@"tgx-coder-pixel-repeat-threshold" orelse types.default_tgx_file_pixel_repeat_threshold,
-                .padding_alignment = res.args.@"tgx-coder-padding-alignment" orelse types.default_tgx_file_padding_alignment,
+                .transparent_pixel_tgx_color = res.args.@"transparent-pixel-tgx-color" orelse types.CoderOptions.default.transparent_pixel_tgx_color,
+                .transparent_pixel_raw_color = res.args.@"transparent-pixel-raw-color" orelse types.CoderOptions.default.transparent_pixel_raw_color,
+                .transparent_pixel_fill_index = res.args.@"transparent-pixel-fill-index" orelse types.CoderOptions.default.transparent_pixel_fill_index,
+                .pixel_repeat_threshold = res.args.@"pixel-repeat-threshold" orelse types.CoderOptions.default.pixel_repeat_threshold,
+                .padding_alignment = res.args.@"padding-alignment" orelse types.CoderOptions.default.padding_alignment,
             },
             action_args.?,
         },
@@ -355,6 +357,7 @@ test "call command for test with all parameters" {
             .{
                 .transparent_pixel_tgx_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
                 .transparent_pixel_raw_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
+                .transparent_pixel_fill_index = 0b11111111,
                 .pixel_repeat_threshold = 2,
                 .padding_alignment = 2,
             },
@@ -370,14 +373,16 @@ test "call command for test with all parameters" {
     const action_tag_name = comptime std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_result.action.@"2")).?;
     const arg_str = std.fmt.comptimePrint(
         "exe --log={s} " ++
-            "--tgx-coder-transparent-pixel-tgx-color 0b{b} " ++
-            "--tgx-coder-transparent-pixel-raw-color 0b{b}" ++
-            " --tgx-coder-pixel-repeat-threshold {d} --tgx-coder-padding-alignment {d} " ++
+            "--transparent-pixel-tgx-color 0b{b} " ++
+            "--transparent-pixel-raw-color 0b{b} " ++
+            "--transparent-pixel-fill-index 0b{b} " ++
+            "--pixel-repeat-threshold {d} --padding-alignment {d} " ++
             "{s} --print-tgx-to-text {s}",
         .{
             comptime std.enums.tagName(std.log.Level, expected_result.action.@"0").?,
             @as(u16, @bitCast(expected_result.action.@"1".transparent_pixel_tgx_color)),
             @as(u16, @bitCast(expected_result.action.@"1".transparent_pixel_raw_color)),
+            expected_result.action.@"1".transparent_pixel_fill_index,
             expected_result.action.@"1".pixel_repeat_threshold,
             expected_result.action.@"1".padding_alignment,
             action_tag_name,
