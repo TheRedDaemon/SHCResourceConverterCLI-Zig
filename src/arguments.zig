@@ -280,7 +280,7 @@ test "call without command" {
     }
 }
 
-test "call without command complete subcommand" {
+test "call command without complete subcommand" {
     const arg_str = "exe test";
     var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
     const args = try internalParseArgs(std.testing.allocator, &arg_iter);
@@ -290,7 +290,65 @@ test "call without command complete subcommand" {
     }
 }
 
-test "call with all command for test" {
+test "call command for extract" {
+    const expected_action_args: types.ActionArgs = .{
+        .extract = .{
+            .file_in = "test.tgx",
+            .dir_out = "test",
+        },
+    };
+
+    const action_tag_name = comptime std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_action_args)).?;
+    const arg_str = std.fmt.comptimePrint(
+        "exe {s} {s} {s}",
+        .{
+            action_tag_name,
+            @field(expected_action_args, action_tag_name).file_in,
+            @field(expected_action_args, action_tag_name).dir_out,
+        },
+    );
+    var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
+    const args = try internalParseArgs(std.testing.allocator, &arg_iter);
+    switch (args) {
+        .action => |*result| {
+            const action_args = &result.@"2";
+            defer action_args.deinit(std.testing.allocator);
+            try std.testing.expectEqualDeep(&expected_action_args, action_args);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "call command for pack" {
+    const expected_action_args: types.ActionArgs = .{
+        .pack = .{
+            .dir_in = "test",
+            .file_out = "test.tgx",
+        },
+    };
+
+    const action_tag_name = comptime std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_action_args)).?;
+    const arg_str = std.fmt.comptimePrint(
+        "exe {s} {s} {s}",
+        .{
+            action_tag_name,
+            @field(expected_action_args, action_tag_name).dir_in,
+            @field(expected_action_args, action_tag_name).file_out,
+        },
+    );
+    var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
+    const args = try internalParseArgs(std.testing.allocator, &arg_iter);
+    switch (args) {
+        .action => |*result| {
+            const action_args = &result.@"2";
+            defer action_args.deinit(std.testing.allocator);
+            try std.testing.expectEqualDeep(&expected_action_args, action_args);
+        },
+        else => try std.testing.expect(false),
+    }
+}
+
+test "call command for test with all parameters" {
     const expected_result: ParsingResult = .{
         .action = .{
             .debug,
@@ -309,6 +367,7 @@ test "call with all command for test" {
         },
     };
 
+    const action_tag_name = comptime std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_result.action.@"2")).?;
     const arg_str = std.fmt.comptimePrint(
         "exe --log={s} " ++
             "--tgx-coder-transparent-pixel-tgx-color 0b{b} " ++
@@ -321,11 +380,8 @@ test "call with all command for test" {
             @as(u16, @bitCast(expected_result.action.@"1".transparent_pixel_raw_color)),
             expected_result.action.@"1".pixel_repeat_threshold,
             expected_result.action.@"1".padding_alignment,
-            comptime std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_result.action.@"2")).?,
-            comptime @field(
-                expected_result.action.@"2",
-                std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_result.action.@"2")).?,
-            ).file_in,
+            action_tag_name,
+            @field(expected_result.action.@"2", action_tag_name).file_in,
         },
     );
     var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
@@ -333,7 +389,7 @@ test "call with all command for test" {
     switch (args) {
         .action => |*result| {
             defer result.@"2".deinit(std.testing.allocator);
-            try std.testing.expectEqualDeep(expected_result, args);
+            try std.testing.expectEqualDeep(&expected_result, &args);
         },
         else => try std.testing.expect(false),
     }
