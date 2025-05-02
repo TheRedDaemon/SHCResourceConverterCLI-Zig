@@ -46,11 +46,13 @@ fn internalMain(allocator: std.mem.Allocator) void {
     defer action_args.deinit(allocator);
     logging.setLogLevel(log_level);
 
-    logging.logAsJson(.debug, allocator, .{
-        .log_level = log_level,
-        .coder_options = coder_options,
-        .action_args = action_args,
-    });
+    if (logging.logEnabled(.debug)) {
+        logging.logAsJson(.debug, allocator, .{
+            .log_level = log_level,
+            .coder_options = coder_options,
+            .action_args = action_args,
+        });
+    }
 }
 
 // currently required to run tests in all imported files

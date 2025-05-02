@@ -33,14 +33,14 @@ pub const ActionArgs = union(ActionCommand) {
 
     pub fn deinit(self: *const @This(), allocator: std.mem.Allocator) void {
         switch (self.*) {
-            .@"test" => |@"test"| {
+            .@"test" => |*@"test"| {
                 allocator.free(@"test".file_in);
             },
-            .extract => |extract| {
+            .extract => |*extract| {
                 allocator.free(extract.file_in);
                 allocator.free(extract.dir_out);
             },
-            .pack => |pack| {
+            .pack => |*pack| {
                 allocator.free(pack.dir_in);
                 allocator.free(pack.file_out);
             },

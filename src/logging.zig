@@ -17,7 +17,7 @@ fn logFn(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    if (@intFromEnum(message_level) > @intFromEnum(log_level)) {
+    if (!logEnabled(message_level)) {
         return;
     }
 
@@ -33,7 +33,7 @@ fn logFn(
 }
 
 pub fn logAsJson(comptime message_level: std.log.Level, allocator: std.mem.Allocator, value: anytype) void {
-    if (@intFromEnum(message_level) > @intFromEnum(log_level)) {
+    if (!logEnabled(message_level)) {
         return;
     }
     const json = std.json.stringifyAlloc(
@@ -46,4 +46,8 @@ pub fn logAsJson(comptime message_level: std.log.Level, allocator: std.mem.Alloc
     };
     defer allocator.free(json);
     logFn(message_level, .default, "{s}:\n{s}", .{ @typeName(@TypeOf(value)), json });
+}
+
+pub fn logEnabled(comptime message_level: std.log.Level) bool {
+    return @intFromEnum(message_level) <= @intFromEnum(log_level);
 }

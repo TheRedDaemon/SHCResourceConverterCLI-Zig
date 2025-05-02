@@ -262,8 +262,6 @@ fn writeClapUsage(params: []const clap.Param(clap.Help)) !void {
     io.stderr(true, "\n", .{});
 }
 
-// TODO: fix tests
-
 test "fail argument parsing" {
     const arg_str = "exe tet"; // misspelled command
     var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
@@ -282,40 +280,61 @@ test "call without command" {
     }
 }
 
-test "call with all command" {
-    const test_result: ParsingResult = .{
+test "call without command complete subcommand" {
+    const arg_str = "exe test";
+    var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
+    const args = try internalParseArgs(std.testing.allocator, &arg_iter);
+    switch (args) {
+        .no_action => try std.testing.expect(true),
+        else => try std.testing.expect(false),
+    }
+}
+
+test "call with all command for test" {
+    const expected_result: ParsingResult = .{
         .action = .{
             .debug,
             .{
-                .action = .@"test",
-                .print_tgx_to_text = true,
-                .tgx_coder_transparent_pixel_tgx_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
-                .tgx_coder_transparent_pixel_raw_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
-                .tgx_coder_pixel_repeat_threshold = 2,
-                .tgx_coder_padding_alignment = 2,
+                .transparent_pixel_tgx_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
+                .transparent_pixel_raw_color = .{ .a = 1, .r = 31, .g = 31, .b = 0 },
+                .pixel_repeat_threshold = 2,
+                .padding_alignment = 2,
+            },
+            .{
+                .@"test" = .{
+                    .print_tgx_to_text = true,
+                    .file_in = "test.tgx",
+                },
             },
         },
     };
 
     const arg_str = std.fmt.comptimePrint(
-        "exe " ++
-            "--log={s} {s} --print-tgx-to-text " ++
+        "exe --log={s} " ++
             "--tgx-coder-transparent-pixel-tgx-color 0b{b} " ++
             "--tgx-coder-transparent-pixel-raw-color 0b{b}" ++
-            " --tgx-coder-pixel-repeat-threshold {d} --tgx-coder-padding-alignment {d}",
+            " --tgx-coder-pixel-repeat-threshold {d} --tgx-coder-padding-alignment {d} " ++
+            "{s} --print-tgx-to-text {s}",
         .{
-            comptime std.enums.tagName(std.log.Level, test_result.action.@"0").?,
-            comptime std.enums.tagName(types.ActionCommand, test_result.action.@"1".action).?,
-            @as(u16, @bitCast(test_result.action.@"1".tgx_coder_transparent_pixel_tgx_color)),
-            @as(u16, @bitCast(test_result.action.@"1".tgx_coder_transparent_pixel_raw_color)),
-            test_result.action.@"1".tgx_coder_pixel_repeat_threshold,
-            test_result.action.@"1".tgx_coder_padding_alignment,
+            comptime std.enums.tagName(std.log.Level, expected_result.action.@"0").?,
+            @as(u16, @bitCast(expected_result.action.@"1".transparent_pixel_tgx_color)),
+            @as(u16, @bitCast(expected_result.action.@"1".transparent_pixel_raw_color)),
+            expected_result.action.@"1".pixel_repeat_threshold,
+            expected_result.action.@"1".padding_alignment,
+            comptime std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_result.action.@"2")).?,
+            comptime @field(
+                expected_result.action.@"2",
+                std.enums.tagName(types.ActionCommand, std.meta.activeTag(expected_result.action.@"2")).?,
+            ).file_in,
         },
     );
     var arg_iter = std.mem.splitSequence(u8, arg_str, " ");
     const args = try internalParseArgs(std.testing.allocator, &arg_iter);
     switch (args) {
-        .action => try std.testing.expectEqualDeep(test_result, args),
+        .action => |*result| {
+            defer result.@"2".deinit(std.testing.allocator);
+            try std.testing.expectEqualDeep(expected_result, args);
+        },
         else => try std.testing.expect(false),
     }
 }
