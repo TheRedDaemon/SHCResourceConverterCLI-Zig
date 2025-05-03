@@ -1,5 +1,5 @@
 const std = @import("std");
-const io = @import("io.zig");
+const io = @import("../io/out.zig");
 
 pub const std_options: std.Options = .{
     .logFn = logFn,

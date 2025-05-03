@@ -1,8 +1,8 @@
 const std = @import("std");
 const clap = @import("clap");
 const config = @import("config");
-const types = @import("types.zig");
-const io = @import("io.zig");
+const types = @import("../types.zig");
+const io = @import("../io/out.zig");
 
 const ParsingResult = union(enum) {
     no_action: std.log.Level,

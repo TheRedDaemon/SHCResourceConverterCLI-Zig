@@ -2,8 +2,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const arguments = @import("arguments.zig");
-const logging = @import("logging.zig");
+const arguments = @import("io/arguments.zig");
+const logging = @import("io/logging.zig");
 
 pub const std_options = logging.std_options;
 
@@ -55,7 +55,7 @@ fn internalMain(allocator: std.mem.Allocator) void {
     }
 
     // TODO: add proper function handling
-    _ = @import("coder/tgx_coder.zig").analyze(u8, "", 0, 0, &coder_options) catch unreachable;
+    _ = @import("coder/tgx_coder.zig").analyze(u8, "", 0, 0, &coder_options, null) catch unreachable;
     _ = @import("coder/tgx_coder.zig").decode(u8, allocator, "", 0, 0, &coder_options) catch unreachable;
 }
 

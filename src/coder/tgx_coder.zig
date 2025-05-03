@@ -1,6 +1,7 @@
 const std = @import("std");
 const types = @import("../types.zig");
-const io = @import("../io.zig");
+const io = @import("../io/out.zig");
+const test_data = @import("../test_data.zig");
 const config = @import("config");
 
 const Marker = enum(u3) {
@@ -55,24 +56,34 @@ const DecoderResult = union(enum) {
 
 const max_pixel_per_marker = 32;
 
-// TODO: add writer option
-
 pub fn analyze(
     comptime PixelType: type,
     data: []const u8,
     width: u32,
     height: u32,
     options: *const types.CoderOptions,
-) DecoderError!types.TgxAnalysis {
+    writer: anytype,
+) (if (@typeInfo(@TypeOf(writer)) == .null) DecoderError else anyerror)!types.TgxAnalysis {
     var analysis = types.TgxAnalysis.empty;
-    return switch (try internalDecode(
-        PixelType,
-        .{ .analysis = &analysis },
-        data,
-        width,
-        height,
-        options,
-    )) {
+    return switch (if (@typeInfo(@TypeOf(writer)) == .null) blk: {
+        break :blk try internalDecode(
+            PixelType,
+            .{ .analysis = &analysis },
+            data,
+            width,
+            height,
+            options,
+        );
+    } else blk: {
+        break :blk try internalDecode(
+            PixelType,
+            .{ .analysis = &analysis, .writer = writer },
+            data,
+            width,
+            height,
+            options,
+        );
+    }) {
         .valid => analysis,
         else => @panic("Decoder performed unexpected action."),
     };
@@ -103,7 +114,7 @@ fn internalDecode(
     width: u32,
     height: u32,
     options: *const types.CoderOptions,
-) DecoderError!DecoderResult {
+) !DecoderResult {
     if (PixelType != types.Argb1555 and PixelType != types.Gray8) {
         @compileError("PixelType must be Argb1555 or Gray8.");
     }
@@ -111,7 +122,6 @@ fn internalDecode(
     const should_decode = comptime @hasField(@TypeOf(request), "allocator");
     const should_analyze = comptime @hasField(@TypeOf(request), "analysis");
     const should_write_text = comptime @hasField(@TypeOf(request), "writer");
-    _ = should_write_text;
 
     const pixel_size = comptime @sizeOf(PixelType);
 
@@ -139,6 +149,7 @@ fn internalDecode(
     };
 
     const analysis = if (should_analyze) @field(&request, "analysis");
+    const writer = if (should_write_text) @field(&request, "writer");
 
     var current_width: usize = 0;
     var current_height: usize = 0;
@@ -152,6 +163,10 @@ fn internalDecode(
         source_index += 1;
 
         if (marker == .newline) {
+            if (should_write_text) {
+                try writer.print("NEWLINE {d}\n", .{pixel_number});
+            }
+
             if (current_width <= 0 and current_height == height) // handle padding at end
             {
                 if (should_analyze) analysis.newline.padding_marker_count += 1;
@@ -187,6 +202,16 @@ fn internalDecode(
 
         switch (marker) {
             .pixel => {
+                if (should_write_text) {
+                    try writer.print("STREAM_PIXEL {d}", .{pixel_number});
+                    for (std.mem.bytesAsSlice(PixelType, data[source_index .. source_index + pixel_number * pixel_size])) |pixel| {
+                        try writer.print(
+                            " 0x{x:0>" ++ std.fmt.comptimePrint("{d}", .{pixel_size * 2}) ++ "}",
+                            .{if (PixelType == types.Argb1555) @as(u16, @bitCast(pixel)) else pixel},
+                        );
+                    }
+                    try writer.print("\n", .{});
+                }
                 if (should_analyze) {
                     analysis.pixel.marker_count += 1;
                     analysis.pixel.pixel_count += pixel_number;
@@ -204,6 +229,9 @@ fn internalDecode(
                 source_index += pixel_number * pixel_size;
             },
             .transparent => {
+                if (should_write_text) {
+                    try writer.print("TRANSPARENT_PIXEL {d}\n", .{pixel_number});
+                }
                 if (should_analyze) {
                     analysis.transparent.marker_count += 1;
                     analysis.transparent.pixel_count += pixel_number;
@@ -215,6 +243,12 @@ fn internalDecode(
             },
             .repeating => { // there might be a special case for magenta pixels
                 const fill_color = std.mem.bytesAsValue(PixelType, data[source_index .. source_index + pixel_size]).*;
+                if (should_write_text) {
+                    try writer.print(
+                        "REPEAT_PIXEL {d} 0x{x:0>" ++ std.fmt.comptimePrint("{d}", .{pixel_size * 2}) ++ "}\n",
+                        .{ pixel_number, if (PixelType == types.Argb1555) @as(u16, @bitCast(fill_color)) else fill_color },
+                    );
+                }
                 if (should_analyze) {
                     analysis.repeating.marker_count += 1;
                     analysis.repeating.pixel_count += pixel_number;
@@ -268,7 +302,7 @@ fn internalDecode(
 test "test tgx analysis" {
     if (!config.test_data_present) return error.SkipZigTest;
 
-    const file = try std.fs.cwd().openFile("./test_data/armys10.tgx", .{});
+    const file = try std.fs.cwd().openFile(test_data.tgx.armys10, .{});
     defer file.close();
 
     const size = (try file.stat()).size;
@@ -285,10 +319,35 @@ test "test tgx analysis" {
     const read_bytes = try reader.read(data);
     try std.testing.expect(read_bytes == size_of_data);
 
-    const result = try analyze(types.Argb1555, data, width, height, &types.CoderOptions.default);
-    _ = result;
+    // zig build test can not handle stdout, since it uses it for communication
+    const result = try analyze(
+        types.Argb1555,
+        data,
+        width,
+        height,
+        &types.CoderOptions.default,
+        null,
+        //io.getStdErr(),
+    );
+    //io.flushErr();
 
-    // TODO: validate analysis
+    try std.testing.expectEqual(46, width);
+    try std.testing.expectEqual(80, height);
+    try std.testing.expectEqualDeep(
+        types.TgxAnalysis{
+            .pixel = .{ .marker_count = 122, .pixel_count = 1270 },
+            .transparent = .{ .marker_count = 210, .pixel_count = 2397 },
+            .repeating = .{ .marker_count = 4, .pixel_count = 13 },
+            .newline = .{
+                .normal_marker_count = 80,
+                .newline_without_marker_count = 0,
+                .unfinished_width_pixel_count = 0,
+                .padding_marker_count = 0,
+            },
+            .color_pixel_with_alpha_zero = 0,
+        },
+        result,
+    );
 }
 
 // TODO: test decoding
