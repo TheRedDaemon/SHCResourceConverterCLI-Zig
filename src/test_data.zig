@@ -18,6 +18,9 @@ fn joinComptime(comptime paths: []const []const u8) []const u8 {
 pub const tgx = struct {
     pub const armys10 = joinComptime(&.{ test_data_folder, "armys10.tgx" });
     pub const SHC_back = joinComptime(&.{ test_data_folder, "SHC_back.tgx" });
+    pub const chicken_sketch = joinComptime(&.{ test_data_folder, "chicken_sketch.tgx" });
+    pub const @"1280r" = joinComptime(&.{ test_data_folder, "1280r.tgx" });
+    pub const armourer_sketch = joinComptime(&.{ test_data_folder, "armourer_sketch.tgx" });
 };
 
 test "test comptime path join" {

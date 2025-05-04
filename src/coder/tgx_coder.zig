@@ -378,8 +378,7 @@ fn internalEncode(
 
     var source_index: usize = 0;
     var target_index: usize = 0;
-    var y_index: usize = 0;
-    while (y_index < height) : (y_index += 1) {
+    for (0..height) |_| {
         var x_index: usize = 0;
         while (x_index < width) {
             var transparent_pixel_count: usize = 0;
@@ -413,31 +412,19 @@ fn internalEncode(
                 // count all repeating pixels that can be considered this line, but check pixels of next lines for this decision
                 // TODO?: Is there a better approach to this? This loop always starts for every single pixel, even if it is not needed
                 // TODO: threshold > 32 would cause issues now
-                var temp_x_index: usize = x_index;
-                var temp_y_index: usize = y_index;
-                var temp_source_index: usize = source_index;
                 var temp_repeating_pixel_count: usize = 0;
-                while (true) {
+                for (raw_data[source_index..], 0..raw_data.len - source_index) |current_pixel, i| {
                     if (temp_repeating_pixel_count >= max_pixel_per_marker) {
                         repeating_pixel_count += max_pixel_per_marker;
                         temp_repeating_pixel_count = 0;
                     }
-                    if (temp_y_index != y_index and temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
+                    if (i + x_index >= width and temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
                         break; // if we reach next line and the threshold is reached, we can stop, since the next line starts new
                     }
-                    if (temp_x_index >= width) {
-                        temp_y_index += 1;
-                        if (temp_y_index >= height) {
-                            break;
-                        }
-                        temp_x_index = 0;
-                    }
-                    if (raw_data[temp_source_index] != next_pixel) {
+                    if (current_pixel != next_pixel) {
                         break;
                     }
                     temp_repeating_pixel_count += 1;
-                    temp_source_index += 1;
-                    temp_x_index += 1;
                 }
                 // if more then one batch, only add remaining pixel count if threshold is reached by them
                 if (repeating_pixel_count == 0 or temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
@@ -638,7 +625,7 @@ test "test tgx analysis" {
 test "test tgx decode and encode" {
     if (!config.test_data_present) return error.SkipZigTest;
 
-    const file = try std.fs.cwd().openFile(test_data.tgx.armys10, .{});
+    const file = try std.fs.cwd().openFile(test_data.tgx.@"1280r", .{});
     defer file.close();
 
     const reader = file.reader();
