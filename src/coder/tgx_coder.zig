@@ -412,7 +412,7 @@ fn internalEncode(
             }
 
             // TODO?: is there a special handling for the magenta transparent-marker color pixel, since the RGB transform ignores it, but only for stream pixels?
-            var pixel_buffer: [max_pixel_per_marker]PixelType = undefined;
+            var pixel_buffer = if (should_encode) @as([max_pixel_per_marker]PixelType, undefined);
             var count: usize = 0;
             var repeating_pixel_count: usize = 0;
             var repeating_pixel: PixelType = undefined;
@@ -477,7 +477,7 @@ fn internalEncode(
                 while (count < adjust_pixel_count) {
                     source_index += 1;
                     x_index += 1;
-                    pixel_buffer[count] = next_pixel;
+                    if (should_encode) pixel_buffer[count] = next_pixel;
                     count += 1;
                 }
                 repeating_pixel_count = 0;
