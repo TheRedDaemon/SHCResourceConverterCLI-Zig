@@ -26,39 +26,33 @@ const DecoderError = error{
     NotEnoughPixels,
 };
 
+const EncoderError = error{
+    OutOfMemory,
+    InvalidDataSize,
+    WrongPixelType,
+};
+
 /// Result of decoding
 ///
-/// The memory is owned by this struct and needs to be freed.
+/// In case it contains raw data, the data needs to be freed.
 const DecoderResult = union(enum) {
-    pixel: struct {
-        pixels: []const types.Argb1555,
-        transparency: []const types.Alpha1,
-    },
-    index: struct {
-        indexes: []const types.Gray8,
-        transparency: []const types.Alpha1,
-    },
+    raw: types.RawTgxStream,
     valid,
+};
 
-    pub fn deinit(self: *DecoderResult, allocator: std.mem.Allocator) void {
-        switch (self.*) {
-            .pixel => |*pixel| {
-                allocator.free(pixel.pixels);
-                allocator.free(pixel.transparency);
-            },
-            .index => |*index| {
-                allocator.free(index.indexes);
-                allocator.free(index.transparency);
-            },
-        }
-    }
+/// Result of decoding
+///
+/// In case it contains the encoded data, the data needs to be freed.
+const EncoderResult = union(enum) {
+    encoded: types.EncodedTgxStream,
+    size: usize,
 };
 
 const max_pixel_per_marker = 32;
 
 pub fn analyze(
     comptime PixelType: type,
-    data: []const u8,
+    encoded_stream: *const types.EncodedTgxStream,
     width: u32,
     height: u32,
     options: *const types.CoderOptions,
@@ -69,7 +63,7 @@ pub fn analyze(
         break :blk try internalDecode(
             PixelType,
             .{ .analysis = &analysis },
-            data,
+            encoded_stream,
             width,
             height,
             options,
@@ -78,7 +72,7 @@ pub fn analyze(
         break :blk try internalDecode(
             PixelType,
             .{ .analysis = &analysis, .writer = writer },
-            data,
+            encoded_stream,
             width,
             height,
             options,
@@ -92,25 +86,28 @@ pub fn analyze(
 pub fn decode(
     comptime PixelType: type,
     allocator: std.mem.Allocator,
-    data: []const u8,
+    encoded_stream: *const types.EncodedTgxStream,
     width: u32,
     height: u32,
     options: *const types.CoderOptions,
-) DecoderError!DecoderResult {
-    return internalDecode(
+) DecoderError!types.RawTgxStream {
+    return switch (try internalDecode(
         PixelType,
         .{ .allocator = allocator },
-        data,
+        encoded_stream,
         width,
         height,
         options,
-    );
+    )) {
+        .raw => |*raw| raw.*,
+        else => @panic("Decoder performed unexpected action."),
+    };
 }
 
 fn internalDecode(
     comptime PixelType: type,
     request: anytype,
-    data: []const u8,
+    encoded_stream: *const types.EncodedTgxStream,
     width: u32,
     height: u32,
     options: *const types.CoderOptions,
@@ -128,7 +125,9 @@ fn internalDecode(
     const allocator, const pixels, const transparency = if (should_decode) blk: {
         const local_allocator: std.mem.Allocator = @field(&request, "allocator");
         const local_pixels = try local_allocator.alloc(PixelType, width * height);
+        errdefer local_allocator.free(local_pixels);
         const local_transparency = try local_allocator.alloc(types.Alpha1, width * height);
+        errdefer local_allocator.free(local_transparency);
 
         // initialize with transparency indicator
         const fill_color = if (PixelType == types.Argb1555) options.transparent_pixel_raw_color else options.transparent_pixel_fill_index;
@@ -150,6 +149,8 @@ fn internalDecode(
 
     const analysis = if (should_analyze) @field(&request, "analysis");
     const writer = if (should_write_text) @field(&request, "writer");
+
+    const data = encoded_stream.data;
 
     var current_width: usize = 0;
     var current_height: usize = 0;
@@ -222,7 +223,10 @@ fn internalDecode(
                     }
                 }
                 if (should_decode) {
-                    @memcpy(pixels[target_index .. target_index + pixel_number], data[source_index .. source_index + pixel_number * pixel_size]);
+                    @memcpy(
+                        pixels[target_index .. target_index + pixel_number],
+                        std.mem.bytesAsSlice(PixelType, data[source_index .. source_index + pixel_number * pixel_size]),
+                    );
                     @memset(transparency[target_index .. target_index + pixel_number], 1);
                     target_index += pixel_number;
                 }
@@ -280,23 +284,271 @@ fn internalDecode(
         return DecoderError.NotEnoughPixels;
     }
 
-    if (!should_decode) {
-        return .valid;
-    } else if (PixelType == types.Argb1555) {
-        return .{
-            .pixel = .{
-                .pixels = pixels,
-                .transparency = transparency,
-            },
-        };
-    } else {
-        return .{
-            .index = .{
-                .indexes = pixels,
-                .transparency = transparency,
-            },
-        };
+    return if (!should_decode) .valid else .{ .raw = types.RawTgxStream.take(PixelType, pixels, transparency) };
+}
+
+pub fn determineEncodedSize(
+    comptime PixelType: type,
+    raw_tgx_stream: *const types.RawTgxStream,
+    width: u32,
+    height: u32,
+    options: *const types.CoderOptions,
+) EncoderError!usize {
+    return switch (try internalEncode(
+        PixelType,
+        .{},
+        raw_tgx_stream,
+        width,
+        height,
+        options,
+    )) {
+        .size => |size| size,
+        else => @panic("Encoder performed unexpected action."),
+    };
+}
+
+pub fn encode(
+    comptime PixelType: type,
+    allocator: std.mem.Allocator,
+    raw_tgx_stream: *const types.RawTgxStream,
+    width: u32,
+    height: u32,
+    options: *const types.CoderOptions,
+    result_size: ?usize,
+) EncoderError!types.EncodedTgxStream {
+    const size = result_size orelse try determineEncodedSize(
+        PixelType,
+        raw_tgx_stream,
+        width,
+        height,
+        options,
+    );
+
+    return switch (try internalEncode(
+        PixelType,
+        .{
+            .allocator = allocator,
+            .size = size,
+        },
+        raw_tgx_stream,
+        width,
+        height,
+        options,
+    )) {
+        .encoded => |*data| data.*,
+        else => @panic("Encoder performed unexpected action."),
+    };
+}
+
+fn internalEncode(
+    comptime PixelType: type,
+    request: anytype,
+    raw_tgx_stream: *const types.RawTgxStream,
+    width: u32,
+    height: u32,
+    options: *const types.CoderOptions,
+) EncoderError!EncoderResult {
+    if (PixelType != types.Argb1555 and PixelType != types.Gray8) {
+        @compileError("PixelType must be Argb1555 or Gray8.");
     }
+
+    const should_encode = comptime @hasField(@TypeOf(request), "allocator") and @hasField(@TypeOf(request), "size");
+
+    const pixel_size = comptime @sizeOf(PixelType);
+
+    const allocator, const size, const data = if (should_encode) blk: {
+        const local_allocator: std.mem.Allocator = @field(&request, "allocator");
+        const local_size: usize = @field(&request, "size");
+        const local_data = try local_allocator.alloc(u8, local_size);
+        errdefer local_allocator.free(local_data);
+
+        break :blk .{
+            local_allocator,
+            local_size,
+            local_data,
+        };
+    } else blk: {
+        break :blk .{ void, void, void };
+    };
+    errdefer if (should_encode) {
+        allocator.free(data);
+    };
+
+    // TODO: test and clean up
+
+    const raw_data = try raw_tgx_stream.getRawData(PixelType);
+    const raw_transparency = raw_tgx_stream.getRawTransparency();
+
+    var result_size: usize = 0;
+    var source_index: usize = 0;
+    var target_index: usize = 0;
+    var y_index: usize = 0;
+    while (y_index < height) : (y_index += 1) {
+        var x_index: usize = 0;
+        while (x_index < width) {
+            var transparent_pixel_count: usize = 0;
+            while (x_index < width and raw_transparency[source_index] == 0) // consume all transparency
+            {
+                transparent_pixel_count += 1;
+                x_index += 1;
+                source_index += 1;
+            }
+
+            if (PixelType == types.Argb1555 or x_index < width) // if indexed and end of the line, short circuit to newline
+            {
+                while (transparent_pixel_count > 0) {
+                    const pixel_this_batch: usize = if (transparent_pixel_count > max_pixel_per_marker) max_pixel_per_marker else transparent_pixel_count;
+                    transparent_pixel_count -= pixel_this_batch;
+
+                    result_size += 1;
+                    if (should_encode) {
+                        if (result_size > size) {
+                            return EncoderError.InvalidDataSize;
+                        }
+                        data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(pixel_this_batch - 1), .marker = Marker.transparent });
+                        target_index += 1;
+                    }
+                }
+            }
+
+            // TODO?: is there a special handling for the magenta transparent-marker color pixel, since the RGB transform ignores it, but only for stream pixels?
+            var pixel_buffer: [max_pixel_per_marker]PixelType = undefined;
+            var count: usize = 0;
+            var repeating_pixel_count: usize = 0;
+            var repeating_pixel: PixelType = undefined;
+            while (x_index < width and count < max_pixel_per_marker) {
+                if (raw_transparency[source_index] == 0) {
+                    break;
+                }
+                const next_pixel = raw_data[source_index];
+
+                // count all repeating pixels that can be considered this line, but check pixels of next lines for this decision
+                // TODO?: Is there a better approach to this? This loop always starts for every single pixel, even if it is not needed
+                // TODO: threshold > 32 would cause issues now
+                var temp_x_index: usize = x_index;
+                var temp_y_index: usize = y_index;
+                var temp_source_index: usize = source_index;
+                var temp_repeating_pixel_count: usize = 0;
+                while (true) {
+                    if (temp_repeating_pixel_count >= max_pixel_per_marker) {
+                        repeating_pixel_count += max_pixel_per_marker;
+                        temp_repeating_pixel_count = 0;
+                    }
+                    if (temp_y_index != y_index and temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
+                        break; // if we reach next line and the threshold is reached, we can stop, since the next line starts new
+                    }
+                    if (temp_x_index >= width) {
+                        temp_y_index += 1;
+                        if (temp_y_index >= height) {
+                            break;
+                        }
+                        temp_x_index = 0;
+                    }
+                    if (raw_data[temp_source_index] != next_pixel) {
+                        break;
+                    }
+                    temp_repeating_pixel_count += 1;
+                    temp_source_index += 1;
+                    temp_x_index += 1;
+                }
+                // if more then one batch, only add remaining pixel count if threshold is reached by them
+                if (repeating_pixel_count == 0 or temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
+                    repeating_pixel_count += temp_repeating_pixel_count;
+                }
+                const reached_threshold = repeating_pixel_count >= options.pixel_repeat_threshold;
+
+                // always fix number of pixels extend over line, since the number is used to know how many repeated pixels to write
+                const remaining_pixel_count = width - x_index;
+                if (remaining_pixel_count < repeating_pixel_count) {
+                    repeating_pixel_count = remaining_pixel_count;
+                }
+
+                if (reached_threshold) {
+                    repeating_pixel = next_pixel;
+                    break;
+                }
+
+                // fix if repeating pixel not long enough for stream
+                var adjust_pixel_count = count + repeating_pixel_count;
+                if (adjust_pixel_count > max_pixel_per_marker) {
+                    adjust_pixel_count = max_pixel_per_marker;
+                }
+
+                while (count < adjust_pixel_count) {
+                    source_index += 1;
+                    x_index += 1;
+                    pixel_buffer[count] = next_pixel;
+                    count += 1;
+                }
+                repeating_pixel_count = 0;
+            }
+
+            if (count > 0) {
+                const size_in_target = count * pixel_size;
+                result_size += 1 + size_in_target;
+                if (should_encode) {
+                    if (result_size > size) {
+                        return error.InvalidDataSize;
+                    }
+                    data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(count - 1), .marker = Marker.pixel });
+                    target_index += 1;
+                    @memcpy(std.mem.bytesAsSlice(PixelType, data[target_index .. target_index + size_in_target]), pixel_buffer[0..count]);
+                    target_index += size_in_target;
+                }
+            }
+
+            while (repeating_pixel_count > 0) {
+                const pixel_this_batch = if (repeating_pixel_count > max_pixel_per_marker) max_pixel_per_marker else repeating_pixel_count;
+                repeating_pixel_count -= pixel_this_batch;
+
+                // adjust indexes
+                x_index += pixel_this_batch;
+                source_index += pixel_this_batch;
+
+                // add to data
+                result_size += 1 + pixel_size;
+                if (should_encode) {
+                    if (result_size > size) {
+                        return error.InvalidDataSize;
+                    }
+                    data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(pixel_this_batch - 1), .marker = Marker.repeating });
+                    target_index += 1;
+                    std.mem.bytesAsValue(PixelType, data[target_index .. target_index + pixel_size]).* = repeating_pixel;
+                    target_index += pixel_size;
+                }
+            }
+        }
+        // line end
+        result_size += 1;
+        if (should_encode) {
+            if (result_size > size) {
+                return error.InvalidDataSize;
+            }
+            data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = 0, .marker = Marker.newline });
+            target_index += 1;
+        }
+    }
+
+    const reminder = result_size % options.padding_alignment;
+    if (reminder > 0) {
+        const required_padding = options.padding_alignment - reminder;
+        result_size += required_padding;
+        if (should_encode) {
+            if (result_size > size) {
+                return error.InvalidDataSize;
+            }
+            @memset(
+                data[target_index .. target_index + required_padding],
+                @bitCast(MarkerByte{ .pixel_index_count = 0, .marker = Marker.newline }),
+            );
+        }
+    }
+
+    return if (should_encode) .{
+        .encoded = types.EncodedTgxStream.take(data),
+    } else .{
+        .size = result_size,
+    };
 }
 
 test "test tgx analysis" {
@@ -305,16 +557,16 @@ test "test tgx analysis" {
     const file = try std.fs.cwd().openFile(test_data.tgx.armys10, .{});
     defer file.close();
 
+    const reader = file.reader();
     const size = (try file.stat()).size;
 
-    const reader = file.reader();
-
+    const size_of_data = size - @sizeOf(u32) * 2;
     const width = try reader.readInt(u32, .little);
     const height: u32 = try reader.readInt(u32, .little);
 
-    const size_of_data = size - @sizeOf(u32) * 2;
     const data = try std.testing.allocator.alloc(u8, size_of_data);
-    defer std.testing.allocator.free(data);
+    var encoded_stream = types.EncodedTgxStream.take(data);
+    defer encoded_stream.deinit(std.testing.allocator);
 
     const read_bytes = try reader.read(data);
     try std.testing.expect(read_bytes == size_of_data);
@@ -322,7 +574,7 @@ test "test tgx analysis" {
     // zig build test can not handle stdout, since it uses it for communication
     const result = try analyze(
         types.Argb1555,
-        data,
+        &encoded_stream,
         width,
         height,
         &types.CoderOptions.default,
@@ -350,4 +602,46 @@ test "test tgx analysis" {
     );
 }
 
-// TODO: test decoding
+test "test tgx decode and encode" {
+    if (!config.test_data_present) return error.SkipZigTest;
+
+    const file = try std.fs.cwd().openFile(test_data.tgx.armys10, .{});
+    defer file.close();
+
+    const reader = file.reader();
+    const size = (try file.stat()).size;
+    const size_of_data = size - @sizeOf(u32) * 2;
+
+    const width = try reader.readInt(u32, .little);
+    const height: u32 = try reader.readInt(u32, .little);
+
+    const data = try std.testing.allocator.alloc(u8, size_of_data);
+    var encoded_stream = types.EncodedTgxStream.take(data);
+    defer encoded_stream.deinit(std.testing.allocator);
+
+    const read_bytes = try reader.read(data);
+    try std.testing.expect(read_bytes == size_of_data);
+
+    var decoding_result = try decode(
+        types.Argb1555,
+        std.testing.allocator,
+        &encoded_stream,
+        width,
+        height,
+        &types.CoderOptions.default,
+    );
+    defer decoding_result.deinit(std.testing.allocator);
+
+    var encoding_result = try encode(
+        types.Argb1555,
+        std.testing.allocator,
+        &decoding_result,
+        width,
+        height,
+        &types.CoderOptions.default,
+        null,
+    );
+    defer encoding_result.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualSlices(u8, data, encoding_result.getEncodedData());
+}

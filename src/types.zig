@@ -70,6 +70,95 @@ pub const Gray8 = u8;
 
 pub const Alpha1 = u1;
 
+/// Meant to contain the encoded tgx data stream.
+///
+/// Takes ownership of the memory and needs to be freed after usage if not used further.
+/// The user requires access to the allocator used for the contained memory.
+pub const EncodedTgxStream = struct {
+    data: []const u8,
+
+    /// Takes ownership of the memory and needs to be freed after usage if not used further.
+    pub fn take(data: []const u8) EncodedTgxStream {
+        return .{ .data = data };
+    }
+
+    pub fn deinit(self: *EncodedTgxStream, allocator: std.mem.Allocator) void {
+        allocator.free(self.data);
+    }
+
+    pub fn getEncodedData(self: *const EncodedTgxStream) []const u8 {
+        return self.data;
+    }
+};
+
+/// Meant to contain the raw tgx data streams.
+///
+/// Takes ownership of the memory and needs to be freed after usage if not used further.
+/// The user requires access to the allocator used for the contained memory.
+pub const RawTgxStream = union(enum) {
+    pixel: struct {
+        pixels: []const Argb1555,
+        transparency: []const Alpha1,
+    },
+    index: struct {
+        indexes: []const Gray8,
+        transparency: []const Alpha1,
+    },
+
+    /// Takes ownership of the memory and needs to be freed after usage if not used further.
+    pub fn take(comptime PixelType: type, pixels: []const PixelType, transparency: []const Alpha1) RawTgxStream {
+        return switch (PixelType) {
+            Argb1555 => .{
+                .pixel = .{
+                    .pixels = pixels,
+                    .transparency = transparency,
+                },
+            },
+            Gray8 => .{
+                .index = .{
+                    .indexes = pixels,
+                    .transparency = transparency,
+                },
+            },
+            else => @compileError("PixelType must be Argb1555 or Gray8."),
+        };
+    }
+
+    pub fn deinit(self: *RawTgxStream, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .pixel => |*pixel| {
+                allocator.free(pixel.pixels);
+                allocator.free(pixel.transparency);
+            },
+            .index => |*index| {
+                allocator.free(index.indexes);
+                allocator.free(index.transparency);
+            },
+        }
+    }
+
+    pub fn getRawData(self: *const RawTgxStream, comptime PixelType: type) error{WrongPixelType}![]const PixelType {
+        return switch (PixelType) {
+            Argb1555 => switch (self.*) {
+                .pixel => |*pixel| pixel.pixels,
+                else => error.WrongPixelType,
+            },
+            Gray8 => switch (self.*) {
+                .index => |*index| index.indexes,
+                else => error.WrongPixelType,
+            },
+            else => @compileError("PixelType must match Union."),
+        };
+    }
+
+    pub fn getRawTransparency(self: *const RawTgxStream) []const Alpha1 {
+        return switch (self.*) {
+            .pixel => |*pixel| pixel.transparency,
+            .index => |*index| index.transparency,
+        };
+    }
+};
+
 // tgx coder analysis
 
 const TgxAnalysisMarker = struct {

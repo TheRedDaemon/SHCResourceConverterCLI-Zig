@@ -15,6 +15,7 @@ const parsers = .{
     .command = clap.parsers.enumeration(types.ActionCommand),
     .log_level = clap.parsers.enumeration(std.log.Level),
     .u8 = clap.parsers.int(u8, 0),
+    .threshold = clap.parsers.int(u5, 0),
     .argb1555 = parseArgb1555Arg,
     .str = clap.parsers.string,
 };
@@ -24,6 +25,11 @@ fn parseArgb1555Arg(in: []const u8) !types.Argb1555 {
     return @bitCast(number);
 }
 
+fn parsePixelRepeatThreshold(in: []const u8) !u8 {
+    const number = try std.fmt.parseInt(u8, in, 0);
+    return if (number > 32) error.InvalidPixelRepeatThreshold else @bitCast(number);
+}
+
 const main_params = clap.parseParamsComptime(std.fmt.comptimePrint(
     \\-h, --help  Display this help and exit.
     \\-v, --version  Display version information and exit.
@@ -31,7 +37,7 @@ const main_params = clap.parseParamsComptime(std.fmt.comptimePrint(
     \\--transparent-pixel-tgx-color <argb1555>  Transparent pixel color used the TGX encoding. Unknown usage. (default: 0b1111100000011111)
     \\--transparent-pixel-raw-color <argb1555>  Transparent pixel color used for alpha in raw data. (default: 0)
     \\--transparent-pixel-fill-index <u8>  Color index used for index images if the pixel is transparent. (default: 0)
-    \\--pixel-repeat-threshold <u8>  Number of repeated pixels required to be considered a repeat. (default: 3)
+    \\--pixel-repeat-threshold <threshold>  Number of repeated pixels required to be considered a repeat. (default: 3)
     \\--padding-alignment <u8>  Byte alignment to use for the padding. (default: 4)
     \\<command>  Actual action to perform. Possible values: {s}
     \\
