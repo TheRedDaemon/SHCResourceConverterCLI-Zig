@@ -354,9 +354,7 @@ fn internalEncode(
 
     const should_encode = comptime @hasField(@TypeOf(request), "allocator") and @hasField(@TypeOf(request), "size");
 
-    const pixel_size = comptime @sizeOf(PixelType);
-
-    const allocator, const size, const data = if (should_encode) blk: {
+    const allocator, const data = if (should_encode) blk: {
         const local_allocator: std.mem.Allocator = @field(&request, "allocator");
         const local_size: usize = @field(&request, "size");
         const local_data = try local_allocator.alloc(u8, local_size);
@@ -364,11 +362,10 @@ fn internalEncode(
 
         break :blk .{
             local_allocator,
-            local_size,
             local_data,
         };
     } else blk: {
-        break :blk .{ void, void, void };
+        break :blk .{ void, void };
     };
     errdefer if (should_encode) {
         allocator.free(data);
@@ -379,7 +376,6 @@ fn internalEncode(
     const raw_data = try raw_tgx_stream.getRawData(PixelType);
     const raw_transparency = raw_tgx_stream.getRawTransparency();
 
-    var result_size: usize = 0;
     var source_index: usize = 0;
     var target_index: usize = 0;
     var y_index: usize = 0;
@@ -399,15 +395,7 @@ fn internalEncode(
                 while (transparent_pixel_count > 0) {
                     const pixel_this_batch: usize = if (transparent_pixel_count > max_pixel_per_marker) max_pixel_per_marker else transparent_pixel_count;
                     transparent_pixel_count -= pixel_this_batch;
-
-                    result_size += 1;
-                    if (should_encode) {
-                        if (result_size > size) {
-                            return EncoderError.InvalidDataSize;
-                        }
-                        data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(pixel_this_batch - 1), .marker = Marker.transparent });
-                        target_index += 1;
-                    }
+                    target_index += try writeEncodedTransparency(target_index, pixel_this_batch, data);
                 }
             }
 
@@ -484,17 +472,7 @@ fn internalEncode(
             }
 
             if (count > 0) {
-                const size_in_target = count * pixel_size;
-                result_size += 1 + size_in_target;
-                if (should_encode) {
-                    if (result_size > size) {
-                        return error.InvalidDataSize;
-                    }
-                    data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(count - 1), .marker = Marker.pixel });
-                    target_index += 1;
-                    @memcpy(std.mem.bytesAsSlice(PixelType, data[target_index .. target_index + size_in_target]), pixel_buffer[0..count]);
-                    target_index += size_in_target;
-                }
+                target_index += try writeEncodedPixels(PixelType, target_index, count, data, pixel_buffer);
             }
 
             while (repeating_pixel_count > 0) {
@@ -506,49 +484,104 @@ fn internalEncode(
                 source_index += pixel_this_batch;
 
                 // add to data
-                result_size += 1 + pixel_size;
-                if (should_encode) {
-                    if (result_size > size) {
-                        return error.InvalidDataSize;
-                    }
-                    data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(pixel_this_batch - 1), .marker = Marker.repeating });
-                    target_index += 1;
-                    std.mem.bytesAsValue(PixelType, data[target_index .. target_index + pixel_size]).* = repeating_pixel;
-                    target_index += pixel_size;
-                }
+                target_index += try writeEncodedRepeating(PixelType, target_index, pixel_this_batch, data, repeating_pixel);
             }
         }
         // line end
-        result_size += 1;
-        if (should_encode) {
-            if (result_size > size) {
-                return error.InvalidDataSize;
-            }
-            data[target_index] = @bitCast(MarkerByte{ .pixel_index_count = 0, .marker = Marker.newline });
-            target_index += 1;
-        }
+        target_index += try writeEncodedNewline(target_index, 1, data);
     }
 
-    const reminder = result_size % options.padding_alignment;
+    const reminder = target_index % options.padding_alignment;
     if (reminder > 0) {
         const required_padding = options.padding_alignment - reminder;
-        result_size += required_padding;
-        if (should_encode) {
-            if (result_size > size) {
-                return error.InvalidDataSize;
-            }
-            @memset(
-                data[target_index .. target_index + required_padding],
-                @bitCast(MarkerByte{ .pixel_index_count = 0, .marker = Marker.newline }),
-            );
-        }
+        target_index += try writeEncodedNewline(target_index, required_padding, data);
     }
 
     return if (should_encode) .{
         .encoded = types.EncodedTgxStream.take(data),
     } else .{
-        .size = result_size,
+        .size = target_index,
     };
+}
+
+fn writeEncodedTransparency(
+    target_index: usize,
+    count: usize,
+    target: anytype,
+) error{InvalidDataSize}!usize {
+    const size_to_add = 1;
+    if (@TypeOf(target) == type) {
+        return size_to_add;
+    }
+    try validateEncodingSize(target_index, size_to_add, target.len);
+    target[target_index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(count - 1), .marker = Marker.transparent });
+    return size_to_add;
+}
+
+fn writeEncodedPixels(
+    comptime PixelType: type,
+    target_index: usize,
+    count: usize,
+    target: anytype,
+    pixels: anytype,
+) error{InvalidDataSize}!usize {
+    const size_in_target = @sizeOf(PixelType) * count;
+    const size_to_add = 1 + size_in_target;
+    if (@TypeOf(target) == type) {
+        return size_to_add;
+    }
+    try validateEncodingSize(target_index, size_to_add, target.len);
+    var index = target_index;
+    target[index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(count - 1), .marker = Marker.pixel });
+    index += 1;
+    @memcpy(std.mem.bytesAsSlice(PixelType, target[index .. index + size_in_target]), pixels[0..count]);
+    return size_to_add;
+}
+
+fn writeEncodedRepeating(
+    comptime PixelType: type,
+    target_index: usize,
+    count: usize,
+    target: anytype,
+    repeating_pixel: anytype,
+) error{InvalidDataSize}!usize {
+    const pixel_size = @sizeOf(PixelType);
+    const size_to_add = 1 + pixel_size;
+    if (@TypeOf(target) == type) {
+        return size_to_add;
+    }
+    try validateEncodingSize(target_index, size_to_add, target.len);
+    var index = target_index;
+    target[index] = @bitCast(MarkerByte{ .pixel_index_count = @truncate(count - 1), .marker = Marker.repeating });
+    index += 1;
+    std.mem.bytesAsValue(PixelType, target[index .. index + pixel_size]).* = repeating_pixel;
+    return size_to_add;
+}
+
+fn writeEncodedNewline(
+    target_index: usize,
+    repeating: usize,
+    target: anytype,
+) error{InvalidDataSize}!usize {
+    if (@TypeOf(target) == type) {
+        return repeating;
+    }
+    try validateEncodingSize(target_index, repeating, target.len);
+    @memset(
+        target[target_index .. target_index + repeating],
+        @bitCast(MarkerByte{ .pixel_index_count = 0, .marker = Marker.newline }),
+    );
+    return repeating;
+}
+
+fn validateEncodingSize(
+    current_size: usize,
+    number_to_add: usize,
+    data_size: usize,
+) error{InvalidDataSize}!void {
+    if (current_size + number_to_add > data_size) {
+        return error.InvalidDataSize;
+    }
 }
 
 test "test tgx analysis" {
