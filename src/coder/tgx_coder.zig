@@ -371,8 +371,6 @@ fn internalEncode(
         allocator.free(data);
     };
 
-    // TODO: test and clean up
-
     const raw_data = try raw_tgx_stream.getRawData(PixelType);
     const raw_transparency = raw_tgx_stream.getRawTransparency();
 
@@ -389,12 +387,12 @@ fn internalEncode(
                 source_index += 1;
             }
 
-            if (PixelType == types.Argb1555 or x_index < width) // if indexed and end of the line, short circuit to newline
-            {
-                while (transparent_pixel_count > 0) {
-                    const pixel_this_batch: usize = if (transparent_pixel_count > max_pixel_per_marker) max_pixel_per_marker else transparent_pixel_count;
-                    transparent_pixel_count -= pixel_this_batch;
-                    target_index += try writeEncodedTransparency(target_index, pixel_this_batch, data);
+            // if indexed and end of the line, short circuit to newline
+            if (PixelType == types.Argb1555 or x_index < width) {
+                while (transparent_pixel_count > max_pixel_per_marker) : (transparent_pixel_count -= max_pixel_per_marker) {
+                    target_index += try writeEncodedTransparency(target_index, max_pixel_per_marker, data);
+                } else if (transparent_pixel_count > 0) {
+                    target_index += try writeEncodedTransparency(target_index, transparent_pixel_count, data);
                 }
             }
 
@@ -411,35 +409,32 @@ fn internalEncode(
 
                 // count all repeating pixels that can be considered this line, but check pixels of next lines for this decision
                 // TODO?: Is there a better approach to this? This loop always starts for every single pixel, even if it is not needed
-                // TODO: threshold > 32 would cause issues now
-                var temp_repeating_pixel_count: usize = 0;
-                for (raw_data[source_index..], 0..raw_data.len - source_index) |current_pixel, i| {
-                    if (temp_repeating_pixel_count >= max_pixel_per_marker) {
-                        repeating_pixel_count += max_pixel_per_marker;
-                        temp_repeating_pixel_count = 0;
-                    }
-                    if (i + x_index >= width and temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
-                        break; // if we reach next line and the threshold is reached, we can stop, since the next line starts new
-                    }
-                    if (current_pixel != next_pixel) {
+                var repeating_count: usize = 0;
+                for (raw_data[source_index..]) |current_pixel| {
+                    if (current_pixel != next_pixel or (repeating_count + x_index >= width and repeating_count % max_pixel_per_marker >= options.pixel_repeat_threshold)) {
+                        // if the next pixel is different or we reach next line and the threshold is reached, we can stop, since the next line starts new
                         break;
                     }
-                    temp_repeating_pixel_count += 1;
+                    repeating_count += 1;
                 }
-                // if more then one batch, only add remaining pixel count if threshold is reached by them
-                if (repeating_pixel_count == 0 or temp_repeating_pixel_count >= options.pixel_repeat_threshold) {
-                    repeating_pixel_count += temp_repeating_pixel_count;
+
+                // if more then one batch, remove last batch if remaining pixel count does not reach threshold
+                if (repeating_count > max_pixel_per_marker) {
+                    const pixel_of_last_batch = repeating_count % max_pixel_per_marker;
+                    repeating_pixel_count = repeating_count - if (pixel_of_last_batch < options.pixel_repeat_threshold) pixel_of_last_batch else 0;
+                } else {
+                    repeating_pixel_count = repeating_count;
                 }
-                const reached_threshold = repeating_pixel_count >= options.pixel_repeat_threshold;
 
                 // always fix number of pixels extend over line, since the number is used to know how many repeated pixels to write
                 const remaining_pixel_count = width - x_index;
-                if (remaining_pixel_count < repeating_pixel_count) {
-                    repeating_pixel_count = remaining_pixel_count;
-                }
+                repeating_pixel_count = if (remaining_pixel_count < repeating_pixel_count) remaining_pixel_count else repeating_pixel_count;
 
-                if (reached_threshold) {
+                // currently based if enough repeating pixels after each other are found, but only write till the end of the line
+                if (repeating_count >= options.pixel_repeat_threshold) {
                     repeating_pixel = next_pixel;
+                    x_index += repeating_pixel_count;
+                    source_index += repeating_pixel_count;
                     break;
                 }
 
@@ -449,12 +444,13 @@ fn internalEncode(
                     adjust_pixel_count = max_pixel_per_marker;
                 }
 
-                while (count < adjust_pixel_count) {
-                    source_index += 1;
-                    x_index += 1;
-                    if (should_encode) pixel_buffer[count] = next_pixel;
-                    count += 1;
+                if (should_encode) {
+                    @memset(pixel_buffer[count..adjust_pixel_count], next_pixel);
                 }
+                const index_adjust = adjust_pixel_count - count;
+                source_index += index_adjust;
+                x_index += index_adjust;
+                count += index_adjust;
                 repeating_pixel_count = 0;
             }
 
@@ -462,16 +458,10 @@ fn internalEncode(
                 target_index += try writeEncodedPixels(PixelType, target_index, count, data, pixel_buffer);
             }
 
-            while (repeating_pixel_count > 0) {
-                const pixel_this_batch = if (repeating_pixel_count > max_pixel_per_marker) max_pixel_per_marker else repeating_pixel_count;
-                repeating_pixel_count -= pixel_this_batch;
-
-                // adjust indexes
-                x_index += pixel_this_batch;
-                source_index += pixel_this_batch;
-
-                // add to data
-                target_index += try writeEncodedRepeating(PixelType, target_index, pixel_this_batch, data, repeating_pixel);
+            while (repeating_pixel_count > max_pixel_per_marker) : (repeating_pixel_count -= max_pixel_per_marker) {
+                target_index += try writeEncodedRepeating(PixelType, target_index, max_pixel_per_marker, data, repeating_pixel);
+            } else if (repeating_pixel_count > 0) {
+                target_index += try writeEncodedRepeating(PixelType, target_index, repeating_pixel_count, data, repeating_pixel);
             }
         }
         // line end
