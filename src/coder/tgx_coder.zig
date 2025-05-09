@@ -1,6 +1,6 @@
 const std = @import("std");
 const types = @import("../types.zig");
-const io = @import("../io/out.zig");
+const out = @import("../io/out.zig");
 const test_data = @import("../test_data.zig");
 const config = @import("config");
 

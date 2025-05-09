@@ -32,7 +32,7 @@
         "--log=info",
         "test",
         "--print-tgx-to-text",
-        "test.tgx"
+        "test_data/1280r.tgx"
       ],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "zig build"

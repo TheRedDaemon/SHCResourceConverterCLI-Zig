@@ -4,12 +4,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arguments = @import("io/arguments.zig");
 const logging = @import("io/logging.zig");
+const types = @import("types.zig");
+const out = @import("io/out.zig");
+
+const TgxFile = @import("TgxFile.zig");
+const Gm1File = @import("Gm1File.zig");
+
+const FileType = enum { tgx, gm1 };
 
 pub const std_options = logging.std_options;
 
 // external to easier set log level
 pub fn main() void {
-    runWithAllocator(void, internalMain);
+    runWithAllocator(anyerror!void, internalMain) catch |err| std.log.err("Unhandled error: {s}", .{@errorName(err)});
 }
 
 /// Run a param less function with an allocator depending on the build type.
@@ -30,7 +37,7 @@ fn runWithAllocator(comptime R: type, comptime func: fn (allocator: std.mem.Allo
     };
 }
 
-fn internalMain(allocator: std.mem.Allocator) void {
+fn internalMain(allocator: std.mem.Allocator) !void {
     const result = arguments.parseArgs(allocator) catch |err| {
         std.log.err("Failed to parse arguments: {s}", .{@errorName(err)});
         return;
@@ -54,9 +61,56 @@ fn internalMain(allocator: std.mem.Allocator) void {
         });
     }
 
-    // TODO: add proper function handling
-    _ = @import("coder/tgx_coder.zig").analyze(u8, &.{ .data = "" }, 0, 0, &coder_options, null) catch unreachable;
-    _ = @import("coder/tgx_coder.zig").decode(u8, allocator, &.{ .data = "" }, 0, 0, &coder_options) catch unreachable;
+    switch (action_args) {
+        .@"test" => |*args| validateFile(
+            allocator,
+            args.file_in,
+            args.print_tgx_to_text,
+            &coder_options,
+        ) catch |err| {
+            std.log.err("Failed to validate file {s}: {s}", .{ args.file_in, @errorName(err) });
+        },
+        .extract => |*args| {
+            _ = args;
+            return error.NotImplemented;
+        },
+        .pack => |*args| {
+            _ = args;
+            return error.NotImplemented;
+        },
+    }
+}
+
+fn validateFile(
+    allocator: std.mem.Allocator,
+    file_in: []const u8,
+    print_tgx_to_text: bool,
+    options: *const types.CoderOptions,
+) !void {
+    const file_type = try determineFileType(file_in);
+    switch (file_type) {
+        .tgx => {
+            var tgx = try TgxFile.init(allocator, file_in);
+            defer tgx.deinit(allocator);
+            try tgx.validate(options);
+            if (print_tgx_to_text) {
+                try tgx.writeEncodedToText(options, out.getStdOut());
+                out.flushOut();
+            }
+        },
+        .gm1 => return error.NotImplemented,
+    }
+}
+
+fn determineFileType(filename: []const u8) !FileType {
+    const extension = std.fs.path.extension(filename);
+    if (std.mem.eql(u8, extension, ".tgx")) {
+        return .tgx;
+    } else if (std.mem.eql(u8, extension, ".gm1")) {
+        return .gm1;
+    } else {
+        return error.UnknownFileExtension;
+    }
 }
 
 // currently required to run tests in all imported files
