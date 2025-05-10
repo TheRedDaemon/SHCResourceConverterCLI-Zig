@@ -70,9 +70,13 @@ fn internalMain(allocator: std.mem.Allocator) !void {
         ) catch |err| {
             std.log.err("Failed to validate file {s}: {s}", .{ args.file_in, @errorName(err) });
         },
-        .extract => |*args| {
-            _ = args;
-            return error.NotImplemented;
+        .extract => |*args| extractFile(
+            allocator,
+            args.file_in,
+            args.dir_out,
+            &coder_options,
+        ) catch |err| {
+            std.log.err("Failed to extract file {s} to {s}: {s}", .{ args.file_in, args.dir_out, @errorName(err) });
         },
         .pack => |*args| {
             _ = args;
@@ -90,13 +94,30 @@ fn validateFile(
     const file_type = try determineFileType(file_in);
     switch (file_type) {
         .tgx => {
-            var tgx = try TgxFile.init(allocator, file_in);
+            var tgx = try TgxFile.loadFile(allocator, file_in);
             defer tgx.deinit(allocator);
             try tgx.validate(options);
             if (print_tgx_to_text) {
                 try tgx.writeEncodedToText(options, out.getStdOut());
                 out.flushOut();
             }
+        },
+        .gm1 => return error.NotImplemented,
+    }
+}
+
+fn extractFile(
+    allocator: std.mem.Allocator,
+    file_in: []const u8,
+    dir_out: []const u8,
+    options: *const types.CoderOptions,
+) !void {
+    const file_type = try determineFileType(file_in);
+    switch (file_type) {
+        .tgx => {
+            var tgx = try TgxFile.loadFile(allocator, file_in);
+            defer tgx.deinit(allocator);
+            try tgx.saveAsRaw(allocator, dir_out, options);
         },
         .gm1 => return error.NotImplemented,
     }
