@@ -2,6 +2,8 @@ const std = @import("std");
 const types = @import("types.zig");
 const out = @import("io/out.zig");
 const tgx_coder = @import("coder/tgx_coder.zig");
+const test_data = @import("test_data.zig");
+const config = @import("config");
 
 const TgxHeader = struct {
     width: u32,
@@ -61,21 +63,102 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
     };
 }
 
+pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !Self {
+    std.log.info("Loading from folder: {s}", .{directory_path});
+
+    var dir = std.fs.cwd().openDir(directory_path, .{}) catch |err| {
+        std.log.err("Could not open directory: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer dir.close();
+
+    const resource = blk: {
+        var local_arena_allocator = std.heap.ArenaAllocator.init(allocator);
+        defer local_arena_allocator.deinit(); // control entire allocation
+        const local_allocator = local_arena_allocator.allocator();
+
+        const resource_file = dir.openFile(resource_file_name, .{}) catch |err| {
+            std.log.err("Could not open resource file: {s}", .{@errorName(err)});
+            return err;
+        };
+        defer resource_file.close();
+        var json_reader = std.json.reader(local_allocator, resource_file.reader());
+        // struct should be copied, so the deallocation should be fine
+        break :blk try std.json.parseFromTokenSourceLeaky(TgxResource, local_allocator, &json_reader, .{});
+    };
+
+    var raw_tgx_stream = blk: {
+        const color = dir.readFileAllocOptions(
+            allocator,
+            color_file_name,
+            resource.color_size,
+            null,
+            @alignOf(types.Argb1555),
+            null,
+        ) catch |err| {
+            std.log.err("Could not read color file: {s}", .{@errorName(err)});
+            return err;
+        };
+        errdefer allocator.free(color);
+        if (resource.color_size != color.len) {
+            return error.InvalidColorFileSize;
+        }
+
+        const alpha = dir.readFileAlloc(allocator, alpha_file_name, resource.alpha_size) catch |err| {
+            std.log.err("Could not read alpha file: {s}", .{@errorName(err)});
+            return err;
+        };
+        errdefer allocator.free(alpha);
+        if (resource.alpha_size != alpha.len) {
+            return error.InvalidAlphaFileSize;
+        }
+
+        break :blk types.RawTgxStream.take(
+            types.Argb1555,
+            std.mem.bytesAsSlice(types.Argb1555, color),
+            std.mem.bytesAsSlice(types.Alpha1, alpha),
+        );
+    };
+    defer raw_tgx_stream.deinit(allocator);
+
+    const encoded_stream = try tgx_coder.encode(
+        types.Argb1555,
+        allocator,
+        &raw_tgx_stream,
+        resource.tgx_header.width,
+        resource.tgx_header.height,
+        options,
+        null,
+    );
+
+    std.log.info("Loaded from folder: {s}", .{directory_path});
+    return .{
+        .tgx_header = resource.tgx_header,
+        .encoded_stream = encoded_stream,
+    };
+}
+
 pub fn saveFile(self: *const Self, file_path: []const u8) !void {
     std.log.info("Saving file: {s}", .{file_path});
-    if (!std.mem.eql(std.fs.path.extension(file_path), tgx_extension)) {
+    if (!std.mem.eql(u8, std.fs.path.extension(file_path), tgx_extension)) {
         return error.InvalidFileExtension;
     }
 
-    const file = std.fs.cwd().createFile(file_path, .{}) catch |err| {
+    var dir = std.fs.cwd().makeOpenPath(std.fs.path.dirname(file_path) orelse ".", .{}) catch |err| {
+        std.log.err("Could not create directory: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer dir.close();
+
+    const file = dir.createFile(std.fs.path.basename(file_path), .{}) catch |err| {
         std.log.err("Could not create file: {s}", .{@errorName(err)});
         return err;
     };
     defer file.close();
 
     const writer = file.writer();
-    try writer.write(u32, self.width, .little);
-    try writer.writeInt(u32, self.height, .little);
+    try writer.writeInt(u32, self.tgx_header.width, .little);
+    try writer.writeInt(u32, self.tgx_header.height, .little);
     try writer.writeAll(self.encoded_stream.getEncodedData());
 
     std.log.info("Saved file: {s}", .{file_path});
@@ -119,23 +202,21 @@ pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path
         }, .{ .whitespace = .indent_2 }, resource_file.writer());
     }
 
-    {
-        const color_file = dir.createFile(color_file_name, .{}) catch |err| {
-            std.log.err("Could not create color file: {s}", .{@errorName(err)});
-            return err;
-        };
-        defer color_file.close();
-        try color_file.writer().writeAll(std.mem.sliceAsBytes(color));
-    }
+    dir.writeFile(.{
+        .sub_path = color_file_name,
+        .data = std.mem.sliceAsBytes(color),
+    }) catch |err| {
+        std.log.err("Could not create color file: {s}", .{@errorName(err)});
+        return err;
+    };
 
-    {
-        const alpha_file = dir.createFile(alpha_file_name, .{}) catch |err| {
-            std.log.err("Could not create alpha file: {s}", .{@errorName(err)});
-            return err;
-        };
-        defer alpha_file.close();
-        try alpha_file.writer().writeAll(std.mem.sliceAsBytes(alpha));
-    }
+    dir.writeFile(.{
+        .sub_path = alpha_file_name,
+        .data = std.mem.sliceAsBytes(alpha),
+    }) catch |err| {
+        std.log.err("Could not create alpha file: {s}", .{@errorName(err)});
+        return err;
+    };
 
     std.log.info("Saved to folder: {s}", .{directory_path});
 }
@@ -177,4 +258,52 @@ pub fn writeEncodedToText(self: *const Self, options: *const types.CoderOptions,
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     self.encoded_stream.deinit(allocator);
+}
+
+test "extract and pack tgx" {
+    if (!config.test_data_present) return error.SkipZigTest;
+
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    // uses tmp base dir hardcoded, since absolute paths are deprecated mostly and I found to way to get the proper paths
+    const dir_name = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &temp_dir.sub_path, "extract" });
+    defer std.testing.allocator.free(dir_name);
+    const file_name = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &temp_dir.sub_path, "pack", "test.tgx" });
+    defer std.testing.allocator.free(file_name);
+
+    const analysis_original = blk: {
+        var tgx = try loadFile(std.testing.allocator, test_data.tgx.chicken_sketch);
+        defer tgx.deinit(std.testing.allocator);
+        try tgx.saveAsRaw(std.testing.allocator, dir_name, &.default);
+        break :blk try tgx_coder.analyze(
+            types.Argb1555,
+            &tgx.encoded_stream,
+            tgx.tgx_header.width,
+            tgx.tgx_header.height,
+            &.default,
+            null,
+        );
+    };
+
+    {
+        var tgx = try loadFromRaw(std.testing.allocator, dir_name, &.default);
+        defer tgx.deinit(std.testing.allocator);
+        try tgx.saveFile(file_name);
+    }
+
+    const analysis_packed = blk: {
+        var tgx = try loadFile(std.testing.allocator, file_name);
+        defer tgx.deinit(std.testing.allocator);
+        break :blk try tgx_coder.analyze(
+            types.Argb1555,
+            &tgx.encoded_stream,
+            tgx.tgx_header.width,
+            tgx.tgx_header.height,
+            &.default,
+            null,
+        );
+    };
+
+    try std.testing.expectEqualDeep(analysis_original, analysis_packed);
 }

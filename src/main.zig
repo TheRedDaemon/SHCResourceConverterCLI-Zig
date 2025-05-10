@@ -78,9 +78,13 @@ fn internalMain(allocator: std.mem.Allocator) !void {
         ) catch |err| {
             std.log.err("Failed to extract file {s} to {s}: {s}", .{ args.file_in, args.dir_out, @errorName(err) });
         },
-        .pack => |*args| {
-            _ = args;
-            return error.NotImplemented;
+        .pack => |*args| packFile(
+            allocator,
+            args.dir_in,
+            args.file_out,
+            &coder_options,
+        ) catch |err| {
+            std.log.err("Failed to pack {s} to file {s}: {s}", .{ args.dir_in, args.file_out, @errorName(err) });
         },
     }
 }
@@ -118,6 +122,23 @@ fn extractFile(
             var tgx = try TgxFile.loadFile(allocator, file_in);
             defer tgx.deinit(allocator);
             try tgx.saveAsRaw(allocator, dir_out, options);
+        },
+        .gm1 => return error.NotImplemented,
+    }
+}
+
+fn packFile(
+    allocator: std.mem.Allocator,
+    dir_in: []const u8,
+    file_out: []const u8,
+    options: *const types.CoderOptions,
+) !void {
+    const file_type = try determineFileType(file_out);
+    switch (file_type) {
+        .tgx => {
+            var tgx = try TgxFile.loadFromRaw(allocator, dir_in, options);
+            defer tgx.deinit(allocator);
+            try tgx.saveFile(file_out);
         },
         .gm1 => return error.NotImplemented,
     }
