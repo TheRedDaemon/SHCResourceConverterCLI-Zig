@@ -32,7 +32,7 @@
         "--log=info",
         "test",
         "--print-tgx-to-text",
-        "test_data/1280r.tgx"
+        "test_data/font_stronghold_aa.gm1"
       ],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "zig build"

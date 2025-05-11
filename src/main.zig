@@ -106,7 +106,10 @@ fn validateFile(
                 out.flushOut();
             }
         },
-        .gm1 => return error.NotImplemented,
+        .gm1 => {
+            var gm1 = try Gm1File.loadFile(allocator, file_in);
+            defer gm1.deinit(allocator);
+        },
     }
 }
 

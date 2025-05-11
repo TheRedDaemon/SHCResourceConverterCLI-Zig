@@ -23,6 +23,14 @@ pub const tgx = struct {
     pub const armourer_sketch = joinComptime(&.{ test_data_folder, "armourer_sketch.tgx" });
 };
 
+pub const gm1 = struct {
+    pub const font_stronghold_aa = joinComptime(&.{ test_data_folder, "font_stronghold_aa.gm1" });
+    pub const anim_armourer = joinComptime(&.{ test_data_folder, "anim_armourer.gm1" });
+    pub const interface_icons2 = joinComptime(&.{ test_data_folder, "interface_icons2.gm1" });
+    pub const tile_buildings1 = joinComptime(&.{ test_data_folder, "tile_buildings1.gm1" });
+    pub const tile_cliffs = joinComptime(&.{ test_data_folder, "tile_cliffs.gm1" });
+};
+
 test "test comptime path join" {
     try std.testing.expectEqualStrings(test_data_folder ++ std.fs.path.sep_str ++ "armys10.tgx", tgx.armys10);
 }

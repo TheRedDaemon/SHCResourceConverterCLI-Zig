@@ -6,8 +6,8 @@ const test_data = @import("test_data.zig");
 const config = @import("config");
 
 const TgxHeader = extern struct {
-    width: u32 align(4),
-    height: u32 align(4),
+    width: u32 align(1),
+    height: u32 align(1),
 };
 
 const TgxResource = struct {
@@ -22,7 +22,7 @@ const resource_file_name = "resource.json";
 const color_file_name = "color.data";
 const alpha_file_name = "alpha.data";
 
-const tgx_header_size = @sizeOf(u32) * 2;
+const tgx_header_size = @sizeOf(TgxHeader);
 
 const Self = @This();
 
