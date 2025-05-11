@@ -5,9 +5,9 @@ const tgx_coder = @import("coder/tgx_coder.zig");
 const test_data = @import("test_data.zig");
 const config = @import("config");
 
-const TgxHeader = struct {
-    width: u32,
-    height: u32,
+const TgxHeader = extern struct {
+    width: u32 align(4),
+    height: u32 align(4),
 };
 
 const TgxResource = struct {
@@ -43,8 +43,7 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
     }
 
     const reader = file.reader();
-    const width = try reader.readInt(u32, .little);
-    const height: u32 = try reader.readInt(u32, .little);
+    const tgx_header = try reader.readStructEndian(TgxHeader, .little);
 
     const size_of_data = size - tgx_header_size;
     const data = try allocator.alloc(u8, size_of_data);
@@ -55,10 +54,7 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
 
     std.log.info("Loaded file: {s}", .{file_path});
     return .{
-        .tgx_header = .{
-            .width = width,
-            .height = height,
-        },
+        .tgx_header = tgx_header,
         .encoded_stream = encoded_stream,
     };
 }
@@ -157,8 +153,7 @@ pub fn saveFile(self: *const Self, file_path: []const u8) !void {
     defer file.close();
 
     const writer = file.writer();
-    try writer.writeInt(u32, self.tgx_header.width, .little);
-    try writer.writeInt(u32, self.tgx_header.height, .little);
+    try writer.writeStructEndian(self.tgx_header, .little);
     try writer.writeAll(self.encoded_stream.getEncodedData());
 
     std.log.info("Saved file: {s}", .{file_path});

@@ -13,7 +13,7 @@ const names = .{
 };
 
 // currently duplicate from zig zon, see: https://github.com/vezel-dev/graf/issues/15
-const version = "0.0.1";
+const version = "0.1.0";
 
 const single_threaded = true; // since it should be a simple cli
 
