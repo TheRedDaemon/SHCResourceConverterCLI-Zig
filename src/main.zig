@@ -109,6 +109,11 @@ fn validateFile(
         .gm1 => {
             var gm1 = try Gm1File.loadFile(allocator, file_in);
             defer gm1.deinit(allocator);
+            try gm1.validate(options);
+            if (print_tgx_to_text) {
+                try gm1.writeEncodedToText(options, out.getStdOut());
+                out.flushOut();
+            }
         },
     }
 }

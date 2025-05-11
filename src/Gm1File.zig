@@ -1,5 +1,7 @@
 const std = @import("std");
 const types = @import("types.zig");
+const out = @import("io/out.zig");
+const tgx_coder = @import("coder/tgx_coder.zig");
 
 const Gm1Type = enum(u32) {
     interface = 1, // Interface items and some building animations. Images are stored similar to TGX images.
@@ -66,12 +68,12 @@ const Gm1Image = struct {
             flags: u8 align(1), // seems to indicate together with game flag if certain animation frames are skipped
         },
         tile_object: extern struct {
-            imagePart: u8 align(1),
-            subParts: u8 align(1),
-            tileOffset: u16 align(1),
-            imagePosition: Gm1TileObjectImagePosition align(1),
-            imageOffsetX: i8 align(1),
-            imageWidth: u8 align(1),
+            image_part: u8 align(1),
+            sub_parts: u8 align(1),
+            tile_offset: u16 align(1),
+            image_position: Gm1TileObjectImagePosition align(1),
+            image_offset_x: i8 align(1),
+            image_width: u8 align(1),
             flags: u8 align(1), // seems to also be flags, not the animation color
         },
     },
@@ -105,6 +107,7 @@ const alpha_file_name = "alpha.data";
 const tile_byte_size = @sizeOf(Gm1Tile);
 const tile_width = 30;
 const tile_height = 16;
+const tile_image_height_offset = 7; // basically the hight the image is "sunk" into the tile, and it seems to be a constant in the game
 
 const gm1_header_size = @sizeOf(Gm1Header);
 const gm1_color_tables_size = @sizeOf(Gm1ColorTables);
@@ -220,6 +223,148 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
         .color_tables = color_tables,
         .images = images,
     };
+}
+
+pub fn validate(self: *const Self, options: *const types.CoderOptions) !void {
+    const writer = out.getStdErr();
+    try std.json.stringify(&self.gm1_header, .{ .whitespace = .indent_2 }, writer);
+    try writer.print("\n", .{});
+    out.flushErr();
+
+    switch (self.gm1_header.gm1_type) {
+        .tiles_object => {
+            for (self.images) |*image| {
+                try self.validateTilesObject(image, options);
+            }
+        },
+        .tgx_const_size, .font, .interface, .animations => {
+            for (self.images) |*image| {
+                try self.validateGm1Tgx(image, options);
+            }
+        },
+        .no_compression_1, .no_compression_2 => {
+            for (self.images) |*image| {
+                try self.validateUncompressed(image, options);
+            }
+        },
+        else => return error.UnknownGm1Type,
+    }
+}
+
+fn validateGm1Tgx(self: *const Self, image: *const Gm1Image, options: *const types.CoderOptions) !void {
+    const writer = out.getStdErr();
+    defer out.flushErr();
+
+    try writer.print("Validating...", .{});
+    out.flushErr();
+
+    const analysis = blk: {
+        if (self.gm1_header.gm1_type != Gm1Type.animations) {
+            break :blk tgx_coder.analyze(
+                types.Argb1555,
+                &image.data.tgx,
+                image.dimensions.width,
+                image.dimensions.height,
+                options,
+                null,
+            );
+        }
+
+        // animations use the origin from the header, so to make sense, all of them need to have the same image size
+        if (self.gm1_header.width != image.dimensions.width or self.gm1_header.height != image.dimensions.height) {
+            break :blk error.AnimationTgxSizeMismatch;
+        }
+        break :blk tgx_coder.analyze(
+            types.Gray8,
+            &image.data.tgx,
+            self.gm1_header.width,
+            self.gm1_header.height,
+            options,
+            null,
+        );
+    } catch |err| {
+        try writer.print("FAILED: {s}\n", .{@errorName(err)});
+        return;
+    };
+    try writer.print("SUCCESS\n", .{});
+    out.flushErr();
+
+    try std.json.stringify(
+        .{
+            .dimensions = &image.dimensions,
+            .info = &image.info.general,
+            .analysis = &analysis,
+        },
+        .{ .whitespace = .indent_2 },
+        writer,
+    );
+    try writer.print("\n", .{});
+}
+
+fn validateUncompressed(self: *const Self, image: *const Gm1Image, options: *const types.CoderOptions) !void {
+    _ = self;
+    _ = image;
+    _ = options;
+    return error.NotImplemented;
+}
+
+fn validateTilesObject(self: *const Self, image: *const Gm1Image, options: *const types.CoderOptions) !void {
+    _ = self;
+    _ = image;
+    _ = options;
+    return error.NotImplemented;
+}
+
+pub fn writeEncodedToText(self: *const Self, options: *const types.CoderOptions, writer: anytype) anyerror!void {
+    switch (self.gm1_header.gm1_type) {
+        .tiles_object => {
+            for (self.images) |*image| {
+                if (image.info.tile_object.image_position == Gm1TileObjectImagePosition.none) {
+                    continue;
+                }
+
+                _ = try tgx_coder.analyze(
+                    types.Argb1555,
+                    &image.data.tile_object.image,
+                    image.info.tile_object.image_width,
+                    image.info.tile_object.tile_offset + tile_image_height_offset,
+                    options,
+                    writer,
+                );
+                try writer.print("\n", .{});
+            }
+        },
+        .tgx_const_size, .font, .interface => {
+            for (self.images) |*image| {
+                _ = try tgx_coder.analyze(
+                    types.Argb1555,
+                    &image.data.tgx,
+                    image.dimensions.width,
+                    image.dimensions.height,
+                    options,
+                    writer,
+                );
+                try writer.print("\n", .{});
+            }
+        },
+        .animations => {
+            for (self.images) |*image| {
+                _ = try tgx_coder.analyze(
+                    types.Gray8,
+                    &image.data.tgx,
+                    self.gm1_header.width,
+                    self.gm1_header.height,
+                    options,
+                    writer,
+                );
+                try writer.print("\n", .{});
+            }
+        },
+        .no_compression_1, .no_compression_2 => {
+            std.log.warn("No tgx text for uncompressed image type: {s}", .{@tagName(self.gm1_header.gm1_type)});
+        },
+        else => return error.UnknownGm1Type,
+    }
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {

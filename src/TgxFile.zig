@@ -238,6 +238,7 @@ pub fn validate(self: *const Self, options: *const types.CoderOptions) !void {
     out.flushErr();
 
     try std.json.stringify(&analysis, .{ .whitespace = .indent_2 }, writer);
+    try writer.print("\n", .{});
 }
 
 pub fn writeEncodedToText(self: *const Self, options: *const types.CoderOptions, writer: anytype) anyerror!void {

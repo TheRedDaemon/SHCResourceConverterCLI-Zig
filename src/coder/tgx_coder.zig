@@ -179,7 +179,7 @@ fn internalDecode(
             }
 
             if (current_width < width) {
-                if (should_analyze) analysis.newline.unfinished_width_pixel_count += 1;
+                if (should_analyze) analysis.newline.unfinished_width_pixel_count += width - current_width;
                 if (should_decode) target_index += width - current_width;
             }
 
