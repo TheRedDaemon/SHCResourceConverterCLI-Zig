@@ -2,6 +2,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const out = @import("io/out.zig");
 const tgx_coder = @import("coder/tgx_coder.zig");
+const tile_coder = @import("coder/tile_coder.zig");
 
 const Gm1Type = enum(u32) {
     interface = 1, // Interface items and some building animations. Images are stored similar to TGX images.
@@ -40,8 +41,6 @@ const Gm1Header = extern struct {
 };
 
 const Gm1ColorTables = [10][256]types.Argb1555;
-
-const Gm1Tile = [256]types.Argb1555;
 
 const Gm1TileObjectImagePosition = enum(u8) {
     none = 0,
@@ -82,7 +81,7 @@ const Gm1Image = struct {
         uncompressed: []const types.Argb1555,
         tile_object: struct {
             image: types.EncodedTgxStream,
-            tile: *Gm1Tile,
+            tile: *tile_coder.Gm1Tile,
         },
     },
 
@@ -103,11 +102,6 @@ pub const gm1_extension = ".gm1";
 const resource_file_name = "resource.json";
 const color_file_name = "color.data";
 const alpha_file_name = "alpha.data";
-
-const tile_byte_size = @sizeOf(Gm1Tile);
-const tile_width = 30;
-const tile_height = 16;
-const tile_image_height_offset = 7; // basically the hight the image is "sunk" into the tile, and it seems to be a constant in the game
 
 const gm1_header_size = @sizeOf(Gm1Header);
 const gm1_color_tables_size = @sizeOf(Gm1ColorTables);
@@ -187,11 +181,11 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
         const image = &images[image_index];
         image.data = switch (gm1_header.gm1_type) {
             .tiles_object => blk: {
-                const tile = try allocator.create(Gm1Tile);
+                const tile = try allocator.create(tile_coder.Gm1Tile);
                 errdefer allocator.destroy(tile);
                 try reader.readNoEof(std.mem.asBytes(tile));
 
-                const data = try allocator.alloc(u8, data_sizes[image_index] - tile_byte_size);
+                const data = try allocator.alloc(u8, data_sizes[image_index] - tile_coder.tile_byte_size);
                 var encoded_stream = types.EncodedTgxStream.take(data);
                 errdefer encoded_stream.deinit(allocator);
                 try reader.readNoEof(data);
@@ -327,7 +321,7 @@ pub fn writeEncodedToText(self: *const Self, options: *const types.CoderOptions,
                     types.Argb1555,
                     &image.data.tile_object.image,
                     image.info.tile_object.image_width,
-                    image.info.tile_object.tile_offset + tile_image_height_offset,
+                    image.info.tile_object.tile_offset + tile_coder.tile_image_height_offset,
                     options,
                     writer,
                 );
