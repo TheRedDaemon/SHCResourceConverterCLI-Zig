@@ -12,6 +12,8 @@ pub const tile_image_height_offset = 7; // basically the height the image is "su
 pub const raw_tile_size = tile_width * tile_height;
 
 const tile_mask = blk: {
+    @setEvalBranchQuota(2000);
+
     const half_tile_width = tile_width / 2;
     const quarter_tile_width = half_tile_width / 2;
     const half_tile_height = tile_height / 2;
@@ -19,17 +21,21 @@ const tile_mask = blk: {
     var mask = std.bit_set.ArrayBitSet(usize, raw_tile_size).initEmpty();
 
     var index: usize = 0;
-    for (-half_tile_height..half_tile_height + 1) |y| {
+    var y: isize = -half_tile_height;
+    while (y <= half_tile_height) : (y += 1) {
         if (y == 0) {
             continue;
         }
         const y_abs = @abs(y);
-        for (-quarter_tile_width..quarter_tile_width + 1) |x| {
+        var x: isize = -quarter_tile_width;
+        while (x <= quarter_tile_width) : (x += 1) {
             const x_abs = @abs(x);
             if (x_abs + y_abs <= half_tile_height) {
+                // for every computed point, set two pixels
                 mask.set(index);
+                mask.set(index + 1);
             }
-            index += 1;
+            index += 2;
         }
     }
     break :blk mask;
@@ -39,7 +45,7 @@ const tile_mask = blk: {
 pub fn analyze(source: *const Gm1Tile) usize {
     var count: usize = 0;
     for (0..tile_size) |i| {
-        if (source[i].alpha == 0) {
+        if (source[i].a == 0) {
             count += 1;
         }
     }
@@ -72,7 +78,7 @@ pub fn encode(
 ) !void {
     var target_index: usize = 0;
 
-    const iter = tile_mask.iterator(.{});
+    var iter = tile_mask.iterator(.{});
     while (iter.next()) |i| {
         if (alpha[i] == 0) {
             return error.AlphaOnTile;
@@ -80,4 +86,28 @@ pub fn encode(
         target_receiver[target_index] = color[i];
         target_index += 1;
     }
+}
+
+test "tile coder" {
+    const tile = [_]types.Argb1555{
+        .{ .r = 1, .g = 2, .b = 3, .a = 1 },
+        .{ .r = 5, .g = 6, .b = 7, .a = 0 },
+    } ** (tile_size / 2);
+
+    const alpha_pixels_in_tile = analyze(&tile);
+    try std.testing.expectEqual(tile_size / 2, alpha_pixels_in_tile);
+
+    var color: [raw_tile_size]types.Argb1555 = undefined;
+    var alpha: [raw_tile_size]types.Alpha1 = undefined;
+    decode(
+        &tile,
+        &color,
+        &alpha,
+        types.CoderOptions.default.transparent_pixel_raw_color,
+    );
+
+    var rebuild_tile: Gm1Tile = undefined;
+    try encode(&color, &alpha, &rebuild_tile);
+
+    try std.testing.expectEqualSlices(types.Argb1555, &tile, &rebuild_tile);
 }

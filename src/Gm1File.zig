@@ -304,9 +304,42 @@ fn validateUncompressed(self: *const Self, image: *const Gm1Image, options: *con
 
 fn validateTilesObject(self: *const Self, image: *const Gm1Image, options: *const types.CoderOptions) !void {
     _ = self;
-    _ = image;
-    _ = options;
-    return error.NotImplemented;
+
+    const writer = out.getStdErr();
+    defer out.flushErr();
+
+    try writer.print("Validating...", .{});
+    out.flushErr();
+
+    const alpha_pixels_in_tile = tile_coder.analyze(image.data.tile_object.tile);
+    var image_analysis: ?types.TgxAnalysis = null;
+    if (image.info.tile_object.image_position != Gm1TileObjectImagePosition.none) {
+        image_analysis = tgx_coder.analyze(
+            types.Argb1555,
+            &image.data.tile_object.image,
+            image.info.tile_object.image_width,
+            image.info.tile_object.tile_offset + tile_coder.tile_image_height_offset,
+            options,
+            null,
+        ) catch |err| {
+            try writer.print("FAILED: {s}\n", .{@errorName(err)});
+            return;
+        };
+    }
+    try writer.print("SUCCESS\n", .{});
+    out.flushErr();
+
+    try std.json.stringify(
+        .{
+            .dimensions = &image.dimensions,
+            .info = &image.info.tile_object,
+            .alpha_pixels_in_tile = alpha_pixels_in_tile,
+            .analysis = &image_analysis,
+        },
+        .{ .whitespace = .indent_2 },
+        writer,
+    );
+    try writer.print("\n", .{});
 }
 
 pub fn writeEncodedToText(self: *const Self, options: *const types.CoderOptions, writer: anytype) anyerror!void {
