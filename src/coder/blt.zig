@@ -11,21 +11,24 @@ const CopyInstructionFieldName = enum {
     bit_mask,
 };
 
+const DefaultValues = struct {
+    pub const @"true" = true;
+    pub const @"false" = false;
+};
+
 pub fn CopyInstruction(
     require_contained: bool,
     ignore_value: ?type,
     bit_mask: bool,
 ) type {
     var fields: []const std.builtin.Type.StructField = &.{};
-    if (require_contained) {
-        fields = fields ++ &[_]std.builtin.Type.StructField{.{
-            .name = @tagName(CopyInstructionFieldName.require_contained),
-            .type = void,
-            .default_value_ptr = &{},
-            .is_comptime = false,
-            .alignment = 0,
-        }};
-    }
+    fields = fields ++ &[_]std.builtin.Type.StructField{.{
+        .name = @tagName(CopyInstructionFieldName.require_contained),
+        .type = bool,
+        .default_value_ptr = if (require_contained) &DefaultValues.true else &DefaultValues.false,
+        .is_comptime = true,
+        .alignment = 0,
+    }};
     if (ignore_value) |value_type| {
         fields = fields ++ &[_]std.builtin.Type.StructField{.{
             .name = @tagName(CopyInstructionFieldName.ignore_value),
@@ -68,8 +71,7 @@ pub fn blt(
 ) BltError!void {
     const InstructionType = if (@typeInfo(@TypeOf(instruction)) == .pointer) std.meta.Child(@TypeOf(instruction)) else @TypeOf(instruction);
 
-    const require_contained = @hasField(InstructionType, @tagName(CopyInstructionFieldName.require_contained));
-    const x_start, const x_end, const y_start, const y_end, const x_start_source, const y_start_source = if (require_contained) blk: {
+    const x_start, const x_end, const y_start, const y_end, const x_start_source, const y_start_source = if (instruction.require_contained) blk: {
         const intern_x_end = position_x + @as(isize, @intCast(source_width));
         const intern_y_end = position_y + @as(isize, @intCast(source_height));
 
