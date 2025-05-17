@@ -3,6 +3,7 @@ const types = @import("types.zig");
 const out = @import("io/out.zig");
 const tgx_coder = @import("coder/tgx_coder.zig");
 const tile_coder = @import("coder/tile_coder.zig");
+const uncompressed_coder = @import("coder/uncompressed_coder.zig");
 
 const Gm1Type = enum(u32) {
     interface = 1, // Interface items and some building animations. Images are stored similar to TGX images.
@@ -238,7 +239,7 @@ pub fn validate(self: *const Self, options: *const types.CoderOptions) !void {
         },
         .no_compression_1, .no_compression_2 => {
             for (self.images) |*image| {
-                try self.validateUncompressed(image, options);
+                try self.validateUncompressed(image);
             }
         },
         else => return error.UnknownGm1Type,
@@ -295,11 +296,36 @@ fn validateGm1Tgx(self: *const Self, image: *const Gm1Image, options: *const typ
     try writer.print("\n", .{});
 }
 
-fn validateUncompressed(self: *const Self, image: *const Gm1Image, options: *const types.CoderOptions) !void {
+fn validateUncompressed(self: *const Self, image: *const Gm1Image) !void {
     _ = self;
-    _ = image;
-    _ = options;
-    return error.NotImplemented;
+
+    const writer = out.getStdErr();
+    defer out.flushErr();
+
+    try writer.print("Validating...", .{});
+    out.flushErr();
+
+    const alpha_pixels_in_uncompressed = uncompressed_coder.analyze(
+        image.data.uncompressed,
+        image.dimensions.width,
+        image.dimensions.height,
+    ) catch |err| {
+        try writer.print("FAILED: {s}\n", .{@errorName(err)});
+        return;
+    };
+    try writer.print("SUCCESS\n", .{});
+    out.flushErr();
+
+    try std.json.stringify(
+        .{
+            .dimensions = &image.dimensions,
+            .info = &image.info.general,
+            .alpha_pixels_in_uncompressed = alpha_pixels_in_uncompressed,
+        },
+        .{ .whitespace = .indent_2 },
+        writer,
+    );
+    try writer.print("\n", .{});
 }
 
 fn validateTilesObject(self: *const Self, image: *const Gm1Image, options: *const types.CoderOptions) !void {

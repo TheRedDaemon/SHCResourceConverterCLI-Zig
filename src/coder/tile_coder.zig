@@ -1,6 +1,8 @@
 const std = @import("std");
 const types = @import("../types.zig");
 
+const EncoderError = error{AlphaOnTile};
+
 pub const tile_size = 256;
 pub const Gm1Tile = [tile_size]types.Argb1555;
 
@@ -56,7 +58,7 @@ pub fn decode(
     source: *const Gm1Tile,
     color_receiver: *[raw_tile_size]types.Argb1555,
     alpha_receiver: *[raw_tile_size]types.Alpha1,
-    transparent_pixel_raw_color: types.Argb1555,
+    options: *const types.CoderOptions,
 ) void {
     var source_index: usize = 0;
     for (0..raw_tile_size) |i| {
@@ -65,7 +67,7 @@ pub fn decode(
             alpha_receiver[i] = 1;
             source_index += 1;
         } else {
-            color_receiver[i] = transparent_pixel_raw_color;
+            color_receiver[i] = options.transparent_pixel_raw_color;
             alpha_receiver[i] = 0;
         }
     }
@@ -75,13 +77,13 @@ pub fn encode(
     color: *const [raw_tile_size]types.Argb1555,
     alpha: *const [raw_tile_size]types.Alpha1,
     target_receiver: *Gm1Tile,
-) !void {
+) EncoderError!void {
     var target_index: usize = 0;
 
     var iter = tile_mask.iterator(.{});
     while (iter.next()) |i| {
         if (alpha[i] == 0) {
-            return error.AlphaOnTile;
+            return EncoderError.AlphaOnTile;
         }
         target_receiver[target_index] = color[i];
         target_index += 1;
@@ -103,7 +105,7 @@ test "tile coder" {
         &tile,
         &color,
         &alpha,
-        types.CoderOptions.default.transparent_pixel_raw_color,
+        &types.CoderOptions.default,
     );
 
     var rebuild_tile: Gm1Tile = undefined;
