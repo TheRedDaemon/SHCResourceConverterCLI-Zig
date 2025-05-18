@@ -30,9 +30,9 @@
       "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI-Zig",
       "args": [
         "--log=info",
-        "test",
-        "--print-tgx-to-text",
-        "test_data/font_stronghold_aa.gm1"
+        "extract",
+        "test_data/tile_buildings1.gm1",
+        "test_data/test_out/tile_buildings1"
       ],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "zig build"

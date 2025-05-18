@@ -4,6 +4,7 @@ const out = @import("io/out.zig");
 const tgx_coder = @import("coder/tgx_coder.zig");
 const tile_coder = @import("coder/tile_coder.zig");
 const uncompressed_coder = @import("coder/uncompressed_coder.zig");
+const blt = @import("coder/blt.zig");
 
 const Gm1Type = enum(u32) {
     interface = 1, // Interface items and some building animations. Images are stored similar to TGX images.
@@ -51,32 +52,47 @@ const Gm1TileObjectImagePosition = enum(u8) {
     _,
 };
 
+const Gm1ImageFlags = packed struct(u8) {
+    unknown_0: bool,
+    unknown_1: bool,
+    skip_during_game_import: bool, // TODO: needs validation
+    unknown_3: bool,
+    unknown_4: bool,
+    unknown_5: bool,
+    unknown_6: bool,
+    unknown_7: bool,
+};
+
+const Gm1ImageDimensions = extern struct {
+    width: u16 align(1),
+    height: u16 align(1),
+    offset_x: u16 align(1),
+    offset_y: u16 align(1),
+};
+
+const Gm1ImageInfo = union(enum) {
+    general: extern struct {
+        relative_data_pos: i16 align(1), // seems to be used to point to data to use instead
+        font_related_size: i16 align(1),
+        unknown_0x4: u8 align(1),
+        unknown_0x5: u8 align(1),
+        unknown_0x6: u8 align(1),
+        flags: Gm1ImageFlags align(1), // seems to indicate together with game flag if certain animation frames are skipped
+    },
+    tile_object: extern struct {
+        image_part: u8 align(1),
+        sub_parts: u8 align(1),
+        tile_offset: u16 align(1),
+        image_position: Gm1TileObjectImagePosition align(1),
+        image_offset_x: i8 align(1),
+        image_width: u8 align(1),
+        flags: Gm1ImageFlags align(1), // seems to also be flags, not the animation color
+    },
+};
+
 const Gm1Image = struct {
-    dimensions: extern struct {
-        width: u16 align(1),
-        height: u16 align(1),
-        offset_x: u16 align(1),
-        offset_y: u16 align(1),
-    },
-    info: union(enum) {
-        general: extern struct {
-            relative_data_pos: i16 align(1), // seems to be used to point to data to use instead
-            font_related_size: i16 align(1),
-            unknown_0x4: u8 align(1),
-            unknown_0x5: u8 align(1),
-            unknown_0x6: u8 align(1),
-            flags: u8 align(1), // seems to indicate together with game flag if certain animation frames are skipped
-        },
-        tile_object: extern struct {
-            image_part: u8 align(1),
-            sub_parts: u8 align(1),
-            tile_offset: u16 align(1),
-            image_position: Gm1TileObjectImagePosition align(1),
-            image_offset_x: i8 align(1),
-            image_width: u8 align(1),
-            flags: u8 align(1), // seems to also be flags, not the animation color
-        },
-    },
+    dimensions: Gm1ImageDimensions,
+    info: Gm1ImageInfo,
     data: union(enum) {
         tgx: types.EncodedTgxStream,
         uncompressed: []const types.Argb1555,
@@ -98,11 +114,46 @@ const Gm1Image = struct {
     }
 };
 
+const BltToTarget: type = blt.CopyInstruction(
+    blt.PositionMode.target,
+    null,
+    false,
+    null,
+    false,
+);
+
+const BltFilteredBitsToTarget: type = blt.CopyInstruction(
+    blt.PositionMode.target,
+    types.Alpha1,
+    false,
+    null,
+    false,
+);
+
+const BltMaskedToTarget: type = blt.CopyInstruction(
+    blt.PositionMode.target,
+    null,
+    true,
+    null,
+    false,
+);
+
+// do not forget to deallocate if received from json
+const Gm1Resource = struct {
+    color_size: usize,
+    alpha_size: usize,
+    canvas_width: usize,
+    canvas_height: usize,
+    gm1_header: *const Gm1Header,
+    images: []struct { *const Gm1ImageDimensions, *const Gm1ImageInfo },
+};
+
 pub const gm1_extension = ".gm1";
 
 const resource_file_name = "resource.json";
 const color_file_name = "color.data";
 const alpha_file_name = "alpha.data";
+const palette_file_name_pattern = "{d}.palette";
 
 const gm1_header_size = @sizeOf(Gm1Header);
 const gm1_color_tables_size = @sizeOf(Gm1ColorTables);
@@ -218,6 +269,355 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
         .color_tables = color_tables,
         .images = images,
     };
+}
+
+pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !void {
+    std.log.info("Saving to folder: {s}", .{directory_path});
+
+    var dir = std.fs.cwd().makeOpenPath(directory_path, .{}) catch |err| {
+        std.log.err("Could not create directory: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer dir.close();
+
+    const canvas_width, const canvas_height = self.determineCanvasSize();
+
+    const canvas_alpha = try allocator.alloc(types.Alpha1, canvas_width * canvas_height);
+    defer allocator.free(canvas_alpha);
+    @memset(canvas_alpha, 0);
+
+    const canvas_color = try allocator.allocWithOptions(
+        u8,
+        canvas_alpha.len * switch (self.gm1_header.gm1_type) {
+            .animations => @as(usize, @sizeOf(types.Gray8)),
+            else => @as(usize, @sizeOf(types.Argb1555)),
+        },
+        @alignOf(types.Argb1555),
+        null,
+    );
+    defer allocator.free(canvas_color);
+    switch (self.gm1_header.gm1_type) {
+        .animations => @memset(canvas_color, options.transparent_pixel_fill_index),
+        else => @memset(std.mem.bytesAsSlice(types.Argb1555, canvas_color), options.transparent_pixel_raw_color),
+    }
+
+    switch (self.gm1_header.gm1_type) {
+        .tiles_object => {
+            for (self.images) |*image| {
+                try self.addTileObjectToCanvas(
+                    allocator,
+                    image,
+                    std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                    canvas_alpha,
+                    canvas_width,
+                    canvas_height,
+                    options,
+                );
+            }
+        },
+        .tgx_const_size, .font, .interface => {
+            for (self.images) |*image| {
+                try self.addGm1TgxToCanvas(
+                    types.Argb1555,
+                    allocator,
+                    image,
+                    std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                    canvas_alpha,
+                    canvas_width,
+                    canvas_height,
+                    options,
+                );
+            }
+        },
+        .animations => {
+            for (self.images) |*image| {
+                try self.addGm1TgxToCanvas(
+                    types.Gray8,
+                    allocator,
+                    image,
+                    std.mem.bytesAsSlice(types.Gray8, canvas_color),
+                    canvas_alpha,
+                    canvas_width,
+                    canvas_height,
+                    options,
+                );
+            }
+        },
+        .no_compression_1, .no_compression_2 => {
+            for (self.images) |*image| {
+                try self.addUncompressedToCanvas(
+                    allocator,
+                    image,
+                    std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                    canvas_alpha,
+                    canvas_width,
+                    canvas_height,
+                    options,
+                );
+            }
+        },
+        else => return error.UnknownGm1Type,
+    }
+
+    {
+        const resource_file = dir.createFile(resource_file_name, .{}) catch |err| {
+            std.log.err("Could not create resource file: {s}", .{@errorName(err)});
+            return err;
+        };
+        defer resource_file.close();
+
+        const images_info = try allocator.alloc(std.meta.Child(@FieldType(Gm1Resource, "images")), self.images.len);
+        defer allocator.free(images_info);
+
+        for (self.images, 0..) |*image, image_index| {
+            images_info[image_index] = .{ &image.dimensions, &image.info };
+        }
+
+        try std.json.stringify(&Gm1Resource{
+            .color_size = canvas_color.len * @sizeOf(std.meta.Child(@TypeOf(canvas_color))),
+            .alpha_size = canvas_alpha.len * @sizeOf(std.meta.Child(@TypeOf(canvas_alpha))),
+            .canvas_width = canvas_width,
+            .canvas_height = canvas_height,
+            .gm1_header = &self.gm1_header,
+            .images = images_info,
+        }, .{ .whitespace = .indent_2 }, resource_file.writer());
+    }
+
+    dir.writeFile(.{
+        .sub_path = color_file_name,
+        .data = std.mem.sliceAsBytes(canvas_color),
+    }) catch |err| {
+        std.log.err("Could not create color file: {s}", .{@errorName(err)});
+        return err;
+    };
+
+    dir.writeFile(.{
+        .sub_path = alpha_file_name,
+        .data = std.mem.sliceAsBytes(canvas_alpha),
+    }) catch |err| {
+        std.log.err("Could not create alpha file: {s}", .{@errorName(err)});
+        return err;
+    };
+
+    for (self.color_tables, 0..) |*color_table, color_table_index| {
+        const palette_file_name = try std.fmt.allocPrint(allocator, palette_file_name_pattern, .{color_table_index});
+        defer allocator.free(palette_file_name);
+        dir.writeFile(.{
+            .sub_path = palette_file_name,
+            .data = std.mem.sliceAsBytes(color_table),
+        }) catch |err| {
+            std.log.err("Could not create palette file: {s}", .{@errorName(err)});
+            return err;
+        };
+    }
+
+    std.log.info("Saved to folder: {s}", .{directory_path});
+}
+
+fn determineCanvasSize(self: *const Self) struct { usize, usize } {
+    var canvas_width: usize = 0;
+    var canvas_height: usize = 0;
+    for (self.images) |*image| {
+        canvas_width = @max(canvas_width, image.dimensions.offset_x + image.dimensions.width);
+        canvas_height = @max(canvas_height, image.dimensions.offset_y + image.dimensions.height);
+    }
+    return .{ canvas_width, canvas_height };
+}
+
+fn addGm1TgxToCanvas(
+    self: *const Self,
+    comptime T: type,
+    allocator: std.mem.Allocator,
+    image: *const Gm1Image,
+    color_canvas: []T,
+    alpha_canvas: []types.Alpha1,
+    canvas_width: usize,
+    canvas_height: usize,
+    options: *const types.CoderOptions,
+) !void {
+    _ = self;
+
+    var decoding_result = tgx_coder.decode(
+        T,
+        allocator,
+        &image.data.tgx,
+        image.dimensions.width,
+        image.dimensions.height,
+        options,
+    ) catch |err| {
+        std.log.err("Could not decode image: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer decoding_result.deinit(allocator);
+
+    try blt.blt(
+        T,
+        BltToTarget{},
+        try decoding_result.getRawData(T),
+        image.dimensions.width,
+        image.dimensions.height,
+        color_canvas,
+        canvas_width,
+        canvas_height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+    try blt.blt(
+        types.Alpha1,
+        BltToTarget{},
+        decoding_result.getRawTransparency(),
+        image.dimensions.width,
+        image.dimensions.height,
+        alpha_canvas,
+        canvas_width,
+        canvas_height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+}
+
+fn addUncompressedToCanvas(
+    self: *const Self,
+    allocator: std.mem.Allocator,
+    image: *const Gm1Image,
+    color_canvas: []types.Argb1555,
+    alpha_canvas: []types.Alpha1,
+    canvas_width: usize,
+    canvas_height: usize,
+    options: *const types.CoderOptions,
+) !void {
+    _ = self;
+
+    const color, const alpha = try uncompressed_coder.decode(
+        allocator,
+        image.data.uncompressed,
+        image.dimensions.width,
+        image.dimensions.height,
+        options,
+    );
+    defer {
+        allocator.free(color);
+        allocator.free(alpha);
+    }
+
+    try blt.blt(
+        types.Argb1555,
+        BltToTarget{},
+        color,
+        image.dimensions.width,
+        image.dimensions.height,
+        color_canvas,
+        canvas_width,
+        canvas_height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+    try blt.blt(
+        types.Alpha1,
+        BltToTarget{},
+        alpha,
+        image.dimensions.width,
+        image.dimensions.height,
+        alpha_canvas,
+        canvas_width,
+        canvas_height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+}
+
+fn addTileObjectToCanvas(
+    self: *const Self,
+    allocator: std.mem.Allocator,
+    image: *const Gm1Image,
+    color_canvas: []types.Argb1555,
+    alpha_canvas: []types.Alpha1,
+    canvas_width: usize,
+    canvas_height: usize,
+    options: *const types.CoderOptions,
+) !void {
+    _ = self;
+
+    var tile_color: [tile_coder.raw_tile_size]types.Argb1555 = undefined;
+    var tile_alpha: [tile_coder.raw_tile_size]types.Alpha1 = undefined;
+    tile_coder.decode(
+        image.data.tile_object.tile,
+        &tile_color,
+        &tile_alpha,
+        options,
+    );
+
+    const x_position_tile = if (image.info.tile_object.image_offset_x < 0) @as(isize, image.dimensions.offset_x) - image.info.tile_object.image_offset_x else @as(isize, image.dimensions.offset_x);
+    const y_position_tile = @as(isize, image.dimensions.offset_y) + image.dimensions.height - tile_coder.tile_height;
+    try blt.blt(
+        types.Argb1555,
+        &BltMaskedToTarget{ .source_bit_mask = &tile_alpha },
+        &tile_color,
+        tile_coder.tile_width,
+        tile_coder.tile_height,
+        color_canvas,
+        canvas_width,
+        canvas_height,
+        x_position_tile,
+        y_position_tile,
+    );
+    try blt.blt(
+        types.Alpha1,
+        &BltFilteredBitsToTarget{ .source_ignore_value = 0 },
+        &tile_alpha,
+        tile_coder.tile_width,
+        tile_coder.tile_height,
+        alpha_canvas,
+        canvas_width,
+        canvas_height,
+        x_position_tile,
+        y_position_tile,
+    );
+    if (image.info.tile_object.image_position == Gm1TileObjectImagePosition.none) {
+        return;
+    }
+
+    const image_width = image.info.tile_object.image_width;
+    const image_height = image.info.tile_object.tile_offset + tile_coder.tile_image_height_offset;
+    var decoding_result = tgx_coder.decode(
+        types.Argb1555,
+        allocator,
+        &image.data.tile_object.image,
+        image_width,
+        image_height,
+        options,
+    ) catch |err| {
+        std.log.err("Could not decode tile image: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer decoding_result.deinit(allocator);
+
+    const x_position_image = if (image.info.tile_object.image_offset_x > 0) @as(isize, image.dimensions.offset_x) + image.info.tile_object.image_offset_x else @as(isize, image.dimensions.offset_x);
+    const y_position_image = image.dimensions.offset_y;
+    try blt.blt(
+        types.Argb1555,
+        &BltMaskedToTarget{ .source_bit_mask = decoding_result.getRawTransparency() },
+        try decoding_result.getRawData(types.Argb1555),
+        image_width,
+        image_height,
+        color_canvas,
+        canvas_width,
+        canvas_height,
+        x_position_image,
+        y_position_image,
+    );
+    try blt.blt(
+        types.Alpha1,
+        &BltFilteredBitsToTarget{ .source_ignore_value = 0 },
+        decoding_result.getRawTransparency(),
+        image_width,
+        image_height,
+        alpha_canvas,
+        canvas_width,
+        canvas_height,
+        x_position_image,
+        y_position_image,
+    );
 }
 
 pub fn validate(self: *const Self, options: *const types.CoderOptions) !void {
@@ -427,3 +827,5 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     }
     allocator.free(self.images);
 }
+
+// TODO: test
