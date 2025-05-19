@@ -138,12 +138,16 @@ const BltMaskedToTarget: type = blt.CopyInstruction(
     false,
 );
 
-// do not forget to deallocate if received from json
-const Gm1Resource = struct {
+const Gm1ResourceInfo = struct {
     color_size: usize,
     alpha_size: usize,
     canvas_width: usize,
     canvas_height: usize,
+};
+
+// do not forget to deallocate if received from json
+const Gm1Resource = struct {
+    info: Gm1ResourceInfo,
     gm1_header: *const Gm1Header,
     images: []struct { *const Gm1ImageDimensions, *const Gm1ImageInfo },
 };
@@ -161,7 +165,7 @@ const gm1_color_tables_size = @sizeOf(Gm1ColorTables);
 const Self = @This();
 
 gm1_header: Gm1Header,
-color_tables: *const Gm1ColorTables,
+color_tables: *Gm1ColorTables,
 images: []Gm1Image,
 
 pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
@@ -271,6 +275,135 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
     };
 }
 
+pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !Self {
+    _ = options;
+
+    std.log.info("Loading from folder: {s}", .{directory_path});
+
+    var dir = std.fs.cwd().openDir(directory_path, .{}) catch |err| {
+        std.log.err("Could not open directory: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer dir.close();
+
+    const gm1_resource_info, const gm1_file = blk: {
+        var local_arena_allocator = std.heap.ArenaAllocator.init(allocator);
+        defer local_arena_allocator.deinit(); // control entire allocation
+        const local_allocator = local_arena_allocator.allocator();
+
+        const resource_file = dir.openFile(resource_file_name, .{}) catch |err| {
+            std.log.err("Could not open resource file: {s}", .{@errorName(err)});
+            return err;
+        };
+        defer resource_file.close();
+        // taken care by the arena allocator
+        var json_reader = std.json.reader(local_allocator, resource_file.reader());
+        const resource = try std.json.parseFromTokenSourceLeaky(Gm1Resource, local_allocator, &json_reader, .{});
+        if (resource.gm1_header.number_of_pictures_in_file != resource.images.len) {
+            return error.ImageNumberMismatch;
+        }
+
+        const images = try allocator.alloc(Gm1Image, resource.images.len);
+        errdefer allocator.free(images);
+        for (images, 0..) |*image, image_index| {
+            image.dimensions = resource.images[image_index][0];
+            image.info = resource.images[image_index][1];
+        }
+
+        break :blk .{
+            resource.info,
+            .{
+                .gm1_header = resource.gm1_header,
+                .color_tables = try allocator.create(Gm1ColorTables),
+                .images = images,
+            },
+        };
+    };
+    errdefer {
+        allocator.destroy(gm1_file.color_tables);
+        allocator.free(gm1_file.images);
+    }
+
+    const canvas_pixels = gm1_resource_info.canvas_width * gm1_resource_info.canvas_height;
+    if (canvas_pixels != gm1_resource_info.color_size * switch (gm1_file.gm1_header.gm1_type) {
+        .animations => @sizeOf(types.Gray8),
+        else => @sizeOf(types.Argb1555),
+    } or canvas_pixels != gm1_resource_info.alpha_size) {
+        return error.CanvasSizeMismatch;
+    }
+
+    for (gm1_file.color_tables, 0..) |*color_table, color_table_index| {
+        const palette_file_name = try std.fmt.allocPrint(allocator, palette_file_name_pattern, .{color_table_index});
+        defer allocator.free(palette_file_name);
+
+        const file = dir.openFile(palette_file_name, .{}) catch |err| {
+            std.log.err("Could not open palette file: {s}", .{@errorName(err)});
+            return err;
+        };
+        const size = (try file.stat()).size;
+        if (size != @sizeOf(Gm1ColorTables)) {
+            return error.PaletteFileHasInvalidSize;
+        }
+        _ = file.read(color_table) catch |err| {
+            std.log.err("Failed to read palette file: {s}", .{@errorName(err)});
+            return err;
+        };
+    }
+
+    const canvas_color, const canvas_alpha = blk: {
+        const color = dir.readFileAllocOptions(
+            allocator,
+            color_file_name,
+            gm1_resource_info.color_size,
+            null,
+            @alignOf(types.Argb1555),
+            null,
+        ) catch |err| {
+            std.log.err("Could not read color file: {s}", .{@errorName(err)});
+            return err;
+        };
+        errdefer allocator.free(color);
+        if (gm1_resource_info.color_size != color.len) {
+            return error.InvalidColorFileSize;
+        }
+
+        const alpha = dir.readFileAlloc(allocator, alpha_file_name, gm1_resource_info.alpha_size) catch |err| {
+            std.log.err("Could not read alpha file: {s}", .{@errorName(err)});
+            return err;
+        };
+        errdefer allocator.free(alpha);
+        if (gm1_resource_info.alpha_size != alpha.len) {
+            return error.InvalidAlphaFileSize;
+        }
+
+        break :blk .{ color, alpha };
+    };
+    defer {
+        allocator.free(canvas_color);
+        allocator.free(canvas_alpha);
+    }
+
+    var image_index: usize = 0;
+    errdefer for (gm1_file.images[0..image_index]) |*image| {
+        image.deinit(allocator);
+    };
+
+    // load allocated data
+    while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
+        const image = &gm1_file.images[image_index];
+        image.data = switch (gm1_file.gm1_header.gm1_type) {
+            .tiles_object => return error.NotImplemented,
+            .tgx_const_size, .font, .interface, .animations => return error.NotImplemented,
+            .animations => return error.NotImplemented,
+            .no_compression_1, .no_compression_2 => return error.NotImplemented,
+            else => return error.UnknownGm1Type,
+        };
+    }
+
+    std.log.info("Loaded from folder: {s}", .{directory_path});
+    return gm1_file;
+}
+
 pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !void {
     std.log.info("Saving to folder: {s}", .{directory_path});
 
@@ -374,10 +507,12 @@ pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path
         }
 
         try std.json.stringify(&Gm1Resource{
-            .color_size = canvas_color.len * @sizeOf(std.meta.Child(@TypeOf(canvas_color))),
-            .alpha_size = canvas_alpha.len * @sizeOf(std.meta.Child(@TypeOf(canvas_alpha))),
-            .canvas_width = canvas_width,
-            .canvas_height = canvas_height,
+            .info = .{
+                .color_size = canvas_color.len * @sizeOf(std.meta.Child(@TypeOf(canvas_color))),
+                .alpha_size = canvas_alpha.len * @sizeOf(std.meta.Child(@TypeOf(canvas_alpha))),
+                .canvas_width = canvas_width,
+                .canvas_height = canvas_height,
+            },
             .gm1_header = &self.gm1_header,
             .images = images_info,
         }, .{ .whitespace = .indent_2 }, resource_file.writer());
