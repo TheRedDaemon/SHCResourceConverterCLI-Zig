@@ -138,6 +138,14 @@ const BltMaskedToTarget: type = blt.CopyInstruction(
     false,
 );
 
+const BltFromSource: type = blt.CopyInstruction(
+    blt.PositionMode.source,
+    null,
+    false,
+    null,
+    false,
+);
+
 const Gm1ResourceInfo = struct {
     color_size: usize,
     alpha_size: usize,
@@ -306,14 +314,15 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
         const images = try allocator.alloc(Gm1Image, resource.images.len);
         errdefer allocator.free(images);
         for (images, 0..) |*image, image_index| {
-            image.dimensions = resource.images[image_index][0];
-            image.info = resource.images[image_index][1];
+            image.dimensions = resource.images[image_index][0].*;
+            image.info = resource.images[image_index][1].*;
+            image.data = undefined; // assigned later
         }
 
         break :blk .{
             resource.info,
-            .{
-                .gm1_header = resource.gm1_header,
+            Self{
+                .gm1_header = resource.gm1_header.*,
                 .color_tables = try allocator.create(Gm1ColorTables),
                 .images = images,
             },
@@ -325,9 +334,9 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
     }
 
     const canvas_pixels = gm1_resource_info.canvas_width * gm1_resource_info.canvas_height;
-    if (canvas_pixels != gm1_resource_info.color_size * switch (gm1_file.gm1_header.gm1_type) {
-        .animations => @sizeOf(types.Gray8),
-        else => @sizeOf(types.Argb1555),
+    if (canvas_pixels != gm1_resource_info.color_size / switch (gm1_file.gm1_header.gm1_type) {
+        .animations => @as(usize, @sizeOf(types.Gray8)),
+        else => @as(usize, @sizeOf(types.Argb1555)),
     } or canvas_pixels != gm1_resource_info.alpha_size) {
         return error.CanvasSizeMismatch;
     }
@@ -341,10 +350,10 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
             return err;
         };
         const size = (try file.stat()).size;
-        if (size != @sizeOf(Gm1ColorTables)) {
+        if (size != @sizeOf(std.meta.Child(Gm1ColorTables))) {
             return error.PaletteFileHasInvalidSize;
         }
-        _ = file.read(color_table) catch |err| {
+        _ = file.read(std.mem.asBytes(color_table)) catch |err| {
             std.log.err("Failed to read palette file: {s}", .{@errorName(err)});
             return err;
         };
@@ -376,7 +385,7 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
             return error.InvalidAlphaFileSize;
         }
 
-        break :blk .{ color, alpha };
+        break :blk .{ color, std.mem.bytesAsSlice(types.Alpha1, alpha) };
     };
     defer {
         allocator.free(canvas_color);
@@ -389,19 +398,76 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
     };
 
     // load allocated data
-    while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
-        const image = &gm1_file.images[image_index];
-        image.data = switch (gm1_file.gm1_header.gm1_type) {
-            .tiles_object => return error.NotImplemented,
-            .tgx_const_size, .font, .interface, .animations => return error.NotImplemented,
-            .animations => return error.NotImplemented,
-            .no_compression_1, .no_compression_2 => return error.NotImplemented,
-            else => return error.UnknownGm1Type,
-        };
+    switch (gm1_file.gm1_header.gm1_type) {
+        .tiles_object => return error.NotImplemented,
+        .tgx_const_size, .font, .interface => return error.NotImplemented,
+        .animations => return error.NotImplemented,
+        .no_compression_1, .no_compression_2 => {
+            while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
+                try readUncompressedToImage(
+                    allocator,
+                    std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                    canvas_alpha,
+                    gm1_resource_info.canvas_width,
+                    gm1_resource_info.canvas_height,
+                    &gm1_file.images[image_index],
+                );
+            }
+        },
+        else => return error.UnknownGm1Type,
     }
 
     std.log.info("Loaded from folder: {s}", .{directory_path});
     return gm1_file;
+}
+
+pub fn readUncompressedToImage(
+    allocator: std.mem.Allocator,
+    color_canvas: []const types.Argb1555,
+    alpha_canvas: []const types.Alpha1,
+    canvas_width: usize,
+    canvas_height: usize,
+    image: *Gm1Image,
+) !void {
+    const color = try allocator.alloc(types.Argb1555, image.dimensions.width * image.dimensions.height);
+    defer allocator.free(color);
+    const alpha = try allocator.alloc(types.Alpha1, image.dimensions.width * image.dimensions.height);
+    defer allocator.free(alpha);
+
+    try blt.blt(
+        types.Argb1555,
+        BltFromSource{},
+        color_canvas,
+        canvas_width,
+        canvas_height,
+        color,
+        image.dimensions.width,
+        image.dimensions.height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+    try blt.blt(
+        types.Alpha1,
+        BltFromSource{},
+        alpha_canvas,
+        canvas_width,
+        canvas_height,
+        alpha,
+        image.dimensions.width,
+        image.dimensions.height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+
+    image.data = .{
+        .uncompressed = try uncompressed_coder.encode(
+            allocator,
+            color,
+            alpha,
+            image.dimensions.width,
+            image.dimensions.height,
+        ),
+    };
 }
 
 pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !void {
