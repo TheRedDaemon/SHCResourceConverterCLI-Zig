@@ -155,7 +155,7 @@ fn packFile(
         .gm1 => {
             var gm1 = try Gm1File.loadFromRaw(allocator, dir_in, options);
             defer gm1.deinit(allocator);
-            //try gm1.saveFile(file_out);
+            try gm1.saveFile(file_out);
         },
     }
 }

@@ -31,6 +31,21 @@ pub const gm1 = struct {
     pub const tile_cliffs = joinComptime(&.{ test_data_folder, "tile_cliffs.gm1" });
 };
 
+pub fn generateSha256FromFile(file_path: []const u8) ![std.crypto.hash.sha2.Sha256.digest_length]u8 {
+    const file = try std.fs.cwd().openFile(file_path, .{});
+    defer file.close();
+
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    var buffer: [4096]u8 = undefined;
+    while (true) {
+        const bytes_read = try file.read(&buffer);
+        if (bytes_read == 0) break; // EOF
+        hasher.update(buffer[0..bytes_read]);
+    }
+
+    return hasher.finalResult();
+}
+
 test "test comptime path join" {
     try std.testing.expectEqualStrings(test_data_folder ++ std.fs.path.sep_str ++ "armys10.tgx", tgx.armys10);
 }

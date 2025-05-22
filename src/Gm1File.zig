@@ -5,6 +5,8 @@ const tgx_coder = @import("coder/tgx_coder.zig");
 const tile_coder = @import("coder/tile_coder.zig");
 const uncompressed_coder = @import("coder/uncompressed_coder.zig");
 const blt = @import("coder/blt.zig");
+const test_data = @import("test_data.zig");
+const config = @import("config");
 
 const Gm1Type = enum(u32) {
     interface = 1, // Interface items and some building animations. Images are stored similar to TGX images.
@@ -294,7 +296,7 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
     };
     defer dir.close();
 
-    const gm1_resource_info, const gm1_file = blk: {
+    const gm1_resource_info, var gm1_file = blk: {
         var local_arena_allocator = std.heap.ArenaAllocator.init(allocator);
         defer local_arena_allocator.deinit(); // control entire allocation
         const local_allocator = local_arena_allocator.allocator();
@@ -398,24 +400,45 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
     };
 
     // load allocated data
+    var data_size: usize = 0;
     switch (gm1_file.gm1_header.gm1_type) {
-        .tiles_object => return error.NotImplemented,
-        .tgx_const_size, .font, .interface => return error.NotImplemented,
-        .animations => return error.NotImplemented,
+        .tiles_object => {
+            while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
+                return error.NotImplemented;
+                // data_size += @sizeOf(tile_coder.Gm1Tile);
+                // data_size += image.data.tile_object.image.getEncodedData().len;
+            }
+        },
+        .tgx_const_size, .font, .interface => {
+            while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
+                return error.NotImplemented;
+                //data_size += image.data.tgx.getEncodedData().len;
+            }
+        },
+        .animations => {
+            // TODO: need validation to use size of the header in the image files
+            while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
+                return error.NotImplemented;
+                //data_size += image.data.tgx.getEncodedData().len;
+            }
+        },
         .no_compression_1, .no_compression_2 => {
             while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
+                const image = &gm1_file.images[image_index];
                 try readUncompressedToImage(
                     allocator,
                     std.mem.bytesAsSlice(types.Argb1555, canvas_color),
                     canvas_alpha,
                     gm1_resource_info.canvas_width,
                     gm1_resource_info.canvas_height,
-                    &gm1_file.images[image_index],
+                    image,
                 );
+                data_size += image.data.uncompressed.len * @sizeOf(types.Argb1555);
             }
         },
         else => return error.UnknownGm1Type,
     }
+    gm1_file.gm1_header.data_size = @intCast(data_size);
 
     std.log.info("Loaded from folder: {s}", .{directory_path});
     return gm1_file;
@@ -468,6 +491,88 @@ pub fn readUncompressedToImage(
             image.dimensions.height,
         ),
     };
+}
+
+pub fn saveFile(self: *const Self, file_path: []const u8) !void {
+    std.log.info("Saving file: {s}", .{file_path});
+    if (!std.mem.eql(u8, std.fs.path.extension(file_path), gm1_extension)) {
+        return error.InvalidFileExtension;
+    }
+
+    var dir = std.fs.cwd().makeOpenPath(std.fs.path.dirname(file_path) orelse ".", .{}) catch |err| {
+        std.log.err("Could not create directory: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer dir.close();
+
+    const file = dir.createFile(std.fs.path.basename(file_path), .{}) catch |err| {
+        std.log.err("Could not create file: {s}", .{@errorName(err)});
+        return err;
+    };
+    defer file.close();
+
+    const writer = file.writer();
+    try writer.writeStructEndian(self.gm1_header, .little);
+    try writer.writeAll(std.mem.asBytes(self.color_tables));
+
+    switch (self.gm1_header.gm1_type) {
+        .tiles_object => {
+            var current_offset: usize = 0;
+            for (self.images) |*image| {
+                try writer.writeInt(u32, @intCast(current_offset), .little);
+                current_offset += @sizeOf(tile_coder.Gm1Tile);
+                current_offset += image.data.tile_object.image.getEncodedData().len;
+            }
+            for (self.images) |*image| {
+                try writer.writeInt(u32, @intCast(@sizeOf(tile_coder.Gm1Tile) + image.data.tile_object.image.getEncodedData().len), .little);
+            }
+            for (self.images) |*image| {
+                try writer.writeStructEndian(image.dimensions, .little);
+                try writer.writeStructEndian(image.info.tile_object, .little);
+            }
+            for (self.images) |*image| {
+                try writer.writeAll(std.mem.asBytes(image.data.tile_object.tile));
+                try writer.writeAll(image.data.tile_object.image.getEncodedData());
+            }
+        },
+        .tgx_const_size, .font, .interface, .animations => {
+            var current_offset: usize = 0;
+            for (self.images) |*image| {
+                try writer.writeInt(u32, @intCast(current_offset), .little);
+                current_offset += image.data.tgx.getEncodedData().len;
+            }
+            for (self.images) |*image| {
+                try writer.writeInt(u32, @intCast(image.data.tgx.getEncodedData().len), .little);
+            }
+            for (self.images) |*image| {
+                try writer.writeStructEndian(image.dimensions, .little);
+                try writer.writeStructEndian(image.info.general, .little);
+            }
+            for (self.images) |*image| {
+                try writer.writeAll(image.data.tgx.getEncodedData());
+            }
+        },
+        .no_compression_1, .no_compression_2 => {
+            var current_offset: usize = 0;
+            for (self.images) |*image| {
+                try writer.writeInt(u32, @intCast(current_offset), .little);
+                current_offset += image.data.uncompressed.len * @sizeOf(types.Argb1555);
+            }
+            for (self.images) |*image| {
+                try writer.writeInt(u32, @intCast(image.data.uncompressed.len * @sizeOf(types.Argb1555)), .little);
+            }
+            for (self.images) |*image| {
+                try writer.writeStructEndian(image.dimensions, .little);
+                try writer.writeStructEndian(image.info.general, .little);
+            }
+            for (self.images) |*image| {
+                try writer.writeAll(std.mem.sliceAsBytes(image.data.uncompressed));
+            }
+        },
+        else => return error.UnknownGm1Type,
+    }
+
+    std.log.info("Saved file: {s}", .{file_path});
 }
 
 pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !void {
@@ -1029,4 +1134,37 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.free(self.images);
 }
 
-// TODO: test
+test "extract and pack gm1" {
+    if (!config.test_data_present) return error.SkipZigTest;
+
+    var temp_dir = std.testing.tmpDir(.{});
+    defer temp_dir.cleanup();
+
+    // uses tmp base dir hardcoded, since absolute paths are deprecated mostly and I found to way to get the proper paths
+    const dir_name = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &temp_dir.sub_path, "extract" });
+    defer std.testing.allocator.free(dir_name);
+    const file_name = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &temp_dir.sub_path, "pack", "test.gm1" });
+    defer std.testing.allocator.free(file_name);
+
+    try testExtractAndPack(test_data.gm1.tile_cliffs, dir_name, file_name);
+    // TODO add more
+}
+fn testExtractAndPack(test_file: []const u8, test_out_dir: []const u8, test_in_file: []const u8) !void {
+    const sha_original = try test_data.generateSha256FromFile(test_file);
+
+    {
+        var gm1 = try loadFile(std.testing.allocator, test_file);
+        defer gm1.deinit(std.testing.allocator);
+        try gm1.saveAsRaw(std.testing.allocator, test_out_dir, &.default);
+    }
+
+    {
+        var gm1 = try loadFromRaw(std.testing.allocator, test_out_dir, &.default);
+        defer gm1.deinit(std.testing.allocator);
+        try gm1.saveFile(test_in_file);
+    }
+
+    const sha_packed = try test_data.generateSha256FromFile(test_in_file);
+
+    try std.testing.expectEqualSlices(u8, &sha_original, &sha_packed);
+}
