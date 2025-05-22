@@ -286,8 +286,6 @@ pub fn loadFile(allocator: std.mem.Allocator, file_path: []const u8) !Self {
 }
 
 pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, options: *const types.CoderOptions) !Self {
-    _ = options;
-
     std.log.info("Loading from folder: {s}", .{directory_path});
 
     var dir = std.fs.cwd().openDir(directory_path, .{}) catch |err| {
@@ -411,8 +409,18 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
         },
         .tgx_const_size, .font, .interface => {
             while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
-                return error.NotImplemented;
-                //data_size += image.data.tgx.getEncodedData().len;
+                const image = &gm1_file.images[image_index];
+                try readGm1TgxToImage(
+                    types.Argb1555,
+                    allocator,
+                    std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                    canvas_alpha,
+                    gm1_resource_info.canvas_width,
+                    gm1_resource_info.canvas_height,
+                    image,
+                    options,
+                );
+                data_size += image.data.tgx.getEncodedData().len;
             }
         },
         .animations => {
@@ -442,6 +450,59 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
 
     std.log.info("Loaded from folder: {s}", .{directory_path});
     return gm1_file;
+}
+
+fn readGm1TgxToImage(
+    comptime T: type,
+    allocator: std.mem.Allocator,
+    color_canvas: []const types.Argb1555,
+    alpha_canvas: []const types.Alpha1,
+    canvas_width: usize,
+    canvas_height: usize,
+    image: *Gm1Image,
+    options: *const types.CoderOptions,
+) !void {
+    const color = try allocator.alloc(T, image.dimensions.width * image.dimensions.height);
+    defer allocator.free(color);
+    const alpha = try allocator.alloc(types.Alpha1, image.dimensions.width * image.dimensions.height);
+    defer allocator.free(alpha);
+
+    try blt.blt(
+        T,
+        BltFromSource{},
+        color_canvas,
+        canvas_width,
+        canvas_height,
+        color,
+        image.dimensions.width,
+        image.dimensions.height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+    try blt.blt(
+        types.Alpha1,
+        BltFromSource{},
+        alpha_canvas,
+        canvas_width,
+        canvas_height,
+        alpha,
+        image.dimensions.width,
+        image.dimensions.height,
+        image.dimensions.offset_x,
+        image.dimensions.offset_y,
+    );
+
+    image.data = .{
+        .tgx = try tgx_coder.encode(
+            T,
+            allocator,
+            &types.RawTgxStream.take(T, color, alpha),
+            image.dimensions.width,
+            image.dimensions.height,
+            options,
+            null,
+        ),
+    };
 }
 
 pub fn readUncompressedToImage(
@@ -1146,8 +1207,12 @@ test "extract and pack gm1" {
     const file_name = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &temp_dir.sub_path, "pack", "test.gm1" });
     defer std.testing.allocator.free(file_name);
 
+    // TODO: fix tgx coder after completing load and save
     try testExtractAndPack(test_data.gm1.tile_cliffs, dir_name, file_name);
-    // TODO add more
+    try testExtractAndPack(test_data.gm1.interface_icons2, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.font_stronghold_aa, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.anim_armourer, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.tile_buildings1, dir_name, file_name);
 }
 fn testExtractAndPack(test_file: []const u8, test_out_dir: []const u8, test_in_file: []const u8) !void {
     const sha_original = try test_data.generateSha256FromFile(test_file);
