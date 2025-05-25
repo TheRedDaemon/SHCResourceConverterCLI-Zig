@@ -424,10 +424,22 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
             }
         },
         .animations => {
-            // TODO: need validation to use size of the header in the image files
             while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
-                return error.NotImplemented;
-                //data_size += image.data.tgx.getEncodedData().len;
+                const image = &gm1_file.images[image_index];
+                if (gm1_file.gm1_header.width != image.dimensions.width or gm1_file.gm1_header.height != image.dimensions.height) {
+                    return error.AnimationTgxSizeMismatch;
+                }
+                try readGm1TgxToImage(
+                    types.Gray8,
+                    allocator,
+                    std.mem.bytesAsSlice(types.Gray8, canvas_color),
+                    canvas_alpha,
+                    gm1_resource_info.canvas_width,
+                    gm1_resource_info.canvas_height,
+                    image,
+                    options,
+                );
+                data_size += image.data.tgx.getEncodedData().len;
             }
         },
         .no_compression_1, .no_compression_2 => {
@@ -455,7 +467,7 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
 fn readGm1TgxToImage(
     comptime T: type,
     allocator: std.mem.Allocator,
-    color_canvas: []const types.Argb1555,
+    color_canvas: []const T,
     alpha_canvas: []const types.Alpha1,
     canvas_width: usize,
     canvas_height: usize,

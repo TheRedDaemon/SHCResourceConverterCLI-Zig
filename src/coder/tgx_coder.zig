@@ -340,6 +340,9 @@ pub fn encode(
     };
 }
 
+// TODO: the encoding for gm1 tgx formats seems to be different than for tgx files
+// the repeat line jump count seems to not be present
+
 fn internalEncode(
     comptime PixelType: type,
     request: anytype,
