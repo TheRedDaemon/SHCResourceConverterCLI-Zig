@@ -30,8 +30,9 @@
       "program": "${workspaceFolder}/zig-out/bin/SHCResourceConverterCLI-Zig",
       "args": [
         "--log=info",
-        "test",
-        "test_data/test_pack/tile_cliffs.gm1"
+        "extract",
+        "test_data/tile_cliffs.gm1",
+        "test_data/test_out/tile_cliffs"
       ],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "zig build"

@@ -124,7 +124,7 @@ pub fn blt(
     const source_image = if (instruction.source_mode == .image) instruction.source_image;
     const source_color = if (instruction.source_mode == .color) instruction.source_color;
     const source_width = instruction.source_width;
-    const source_height = instruction.source_width;
+    const source_height = instruction.source_height;
     const source_ignore_value = if (@hasField(InstructionType, @tagName(CopyInstructionFieldName.source_ignore_value))) instruction.source_ignore_value;
     const source_bit_mask = blk: {
         if (!@hasField(InstructionType, @tagName(CopyInstructionFieldName.source_bit_mask))) {
@@ -240,7 +240,7 @@ test "blt" {
     const source_width: usize = 2;
     const source_height: usize = 2;
     const target_width: usize = 3;
-    const target_height: usize = 3;
+    const target_height: usize = 4;
 
     const source: []u8 = try std.testing.allocator.alloc(u8, source_width * source_height);
     defer std.testing.allocator.free(source);
@@ -268,7 +268,7 @@ test "blt" {
             .position_y = 0,
         },
     );
-    try std.testing.expectEqualSlices(u8, &.{ 1, 1, 0, 1, 1, 0, 0, 0, 0 }, target);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0 }, target);
 
     const Ignored = CopyInstruction(.{
         .value_type = u8,
@@ -290,7 +290,7 @@ test "blt" {
 
     @memset(target, 0);
     try blt(&ignored_instruction);
-    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 0, 0, 0, 0, 0 }, target);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, target);
 
     const Masked = CopyInstruction(.{
         .value_type = u8,
@@ -320,7 +320,7 @@ test "blt" {
 
     @memset(target, 0);
     try blt(&masked_instruction);
-    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 0, 1, 0, 0, 0 }, target);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 }, target);
 
     const copy_source_width: usize = target_width;
     const copy_source_height: usize = target_height;
@@ -395,5 +395,5 @@ test "blt" {
             .position_y = 1,
         },
     );
-    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 2, 2, 0, 2, 2 }, target);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0, 2, 2, 0, 2, 2, 0, 0, 0 }, target);
 }
