@@ -142,11 +142,29 @@ fn BltMaskedImageToTarget(value_type: type) type {
     });
 }
 
+fn BltMaskedColorToTarget(value_type: type) type {
+    return blt.CopyInstruction(.{
+        .value_type = value_type,
+        .source_mode = blt.SourceMode.color,
+        .position_mode = blt.PositionMode.target,
+        .source_bit_mask = true,
+    });
+}
+
 fn BltImageFromSource(value_type: type) type {
     return blt.CopyInstruction(.{
         .value_type = value_type,
         .source_mode = blt.SourceMode.image,
         .position_mode = blt.PositionMode.source,
+    });
+}
+
+fn BltMaskedImageFromSource(value_type: type) type {
+    return blt.CopyInstruction(.{
+        .value_type = value_type,
+        .source_mode = blt.SourceMode.image,
+        .position_mode = blt.PositionMode.source,
+        .target_bit_mask = true,
     });
 }
 
@@ -404,9 +422,18 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
     switch (gm1_file.gm1_header.gm1_type) {
         .tiles_object => {
             while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
-                return error.NotImplemented;
-                // data_size += @sizeOf(tile_coder.Gm1Tile);
-                // data_size += image.data.tile_object.image.getEncodedData().len;
+                const image = &gm1_file.images[image_index];
+                try readTileObjectToImage(
+                    allocator,
+                    std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                    canvas_alpha,
+                    gm1_resource_info.canvas_width,
+                    gm1_resource_info.canvas_height,
+                    image,
+                    options,
+                );
+                data_size += @sizeOf(tile_coder.Gm1Tile);
+                data_size += image.data.tile_object.image.getEncodedData().len;
             }
         },
         .tgx_const_size, .font, .interface => {
@@ -519,7 +546,7 @@ fn readGm1TgxToImage(
     };
 }
 
-pub fn readUncompressedToImage(
+fn readUncompressedToImage(
     allocator: std.mem.Allocator,
     color_canvas: []const types.Argb1555,
     alpha_canvas: []const types.Alpha1,
@@ -566,6 +593,130 @@ pub fn readUncompressedToImage(
             image.dimensions.height,
         ),
     };
+}
+
+fn readTileObjectToImage(
+    allocator: std.mem.Allocator,
+    color_canvas: []const types.Argb1555,
+    alpha_canvas: []const types.Alpha1,
+    canvas_width: usize,
+    canvas_height: usize,
+    image: *Gm1Image,
+    options: *const types.CoderOptions,
+) !void {
+    var tile_color: [tile_coder.raw_tile_size]types.Argb1555 = undefined;
+    var tile_alpha: [tile_coder.raw_tile_size]types.Alpha1 = undefined;
+
+    const x_position_tile = if (image.info.tile_object.image_offset_x < 0) @as(isize, image.dimensions.offset_x) - image.info.tile_object.image_offset_x else @as(isize, image.dimensions.offset_x);
+    const y_position_tile = @as(isize, image.dimensions.offset_y) + image.dimensions.height - tile_coder.tile_height;
+    try blt.blt(
+        BltImageFromSource(types.Argb1555){
+            .source_image = color_canvas,
+            .source_width = canvas_width,
+            .source_height = canvas_height,
+            .target = &tile_color,
+            .target_width = tile_coder.tile_width,
+            .target_height = tile_coder.tile_height,
+            .position_x = x_position_tile,
+            .position_y = y_position_tile,
+        },
+    );
+    try blt.blt(
+        BltImageFromSource(types.Alpha1){
+            .source_image = alpha_canvas,
+            .source_width = canvas_width,
+            .source_height = canvas_height,
+            .target = &tile_alpha,
+            .target_width = tile_coder.tile_width,
+            .target_height = tile_coder.tile_height,
+            .position_x = x_position_tile,
+            .position_y = y_position_tile,
+        },
+    );
+
+    const gm_tile = try allocator.create(tile_coder.Gm1Tile);
+    errdefer allocator.destroy(gm_tile);
+    try tile_coder.encode(&tile_color, &tile_alpha, gm_tile);
+
+    image.data = .{
+        .tile_object = .{
+            .tile = gm_tile,
+            .image = undefined,
+        },
+    };
+
+    if (image.info.tile_object.image_position == Gm1TileObjectImagePosition.none) {
+        image.data.tile_object.image = types.EncodedTgxStream.take(&.{});
+        return;
+    }
+    // decode again to get a tile cutter for the image
+    // overhead, but ok for here
+    tile_coder.decode(gm_tile, &tile_color, &tile_alpha, options);
+    const image_width = image.info.tile_object.image_width;
+    const image_height = image.info.tile_object.tile_offset + tile_coder.tile_image_height_offset;
+    const x_position_image = if (image.info.tile_object.image_offset_x > 0) @as(isize, image.dimensions.offset_x) + image.info.tile_object.image_offset_x else @as(isize, image.dimensions.offset_x);
+    const y_position_image = image.dimensions.offset_y;
+
+    const color = try allocator.alloc(types.Argb1555, image_width * image_height);
+    defer allocator.free(color);
+    const alpha = try allocator.alloc(types.Alpha1, image_width * image_height);
+    defer allocator.free(alpha);
+
+    // get alpha for image
+    try blt.blt(
+        BltImageFromSource(types.Alpha1){
+            .source_image = alpha_canvas,
+            .source_width = canvas_width,
+            .source_height = canvas_height,
+            .target = alpha,
+            .target_width = image_width,
+            .target_height = image_height,
+            .position_x = x_position_image,
+            .position_y = y_position_image,
+        },
+    );
+
+    // remove tile if overlapping
+    const x_position_tile_image_relative = x_position_tile - x_position_image;
+    const y_position_tile_image_relative = y_position_tile - y_position_image;
+    try blt.blt(
+        BltMaskedColorToTarget(types.Alpha1){
+            .source_color = 0,
+            .source_width = tile_coder.tile_width,
+            .source_height = tile_coder.tile_height,
+            .target = alpha,
+            .target_width = image_width,
+            .target_height = image_height,
+            .position_x = x_position_tile_image_relative,
+            .position_y = y_position_tile_image_relative,
+            .source_bit_mask = &tile_alpha,
+        },
+    );
+
+    // get masked color for image
+    try blt.blt(
+        BltMaskedImageFromSource(types.Argb1555){
+            .source_image = color_canvas,
+            .source_width = canvas_width,
+            .source_height = canvas_height,
+            .target = color,
+            .target_width = image_width,
+            .target_height = image_height,
+            .position_x = x_position_image,
+            .position_y = y_position_image,
+            .target_bit_mask = alpha,
+        },
+    );
+
+    image.data.tile_object.image = try tgx_coder.encode(
+        types.Argb1555,
+        allocator,
+        &types.RawTgxStream.take(types.Argb1555, color, alpha),
+        image_width,
+        image_height,
+        options,
+        null,
+    );
 }
 
 pub fn saveFile(self: *const Self, file_path: []const u8) !void {
@@ -1229,7 +1380,7 @@ test "extract and pack gm1" {
     try testExtractAndPack(test_data.gm1.tile_cliffs, dir_name, file_name);
     //try testExtractAndPack(test_data.gm1.interface_icons2, dir_name, file_name);
     //try testExtractAndPack(test_data.gm1.font_stronghold_aa, dir_name, file_name);
-    try testExtractAndPack(test_data.gm1.anim_armourer, dir_name, file_name);
+    //try testExtractAndPack(test_data.gm1.anim_armourer, dir_name, file_name);
     //try testExtractAndPack(test_data.gm1.tile_buildings1, dir_name, file_name);
 }
 fn testExtractAndPack(test_file: []const u8, test_out_dir: []const u8, test_in_file: []const u8) !void {
