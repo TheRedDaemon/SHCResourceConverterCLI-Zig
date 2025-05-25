@@ -503,9 +503,9 @@ fn readGm1TgxToImage(
     image: *Gm1Image,
     options: *const types.CoderOptions,
 ) !void {
-    const color = try allocator.alloc(T, image.dimensions.width * image.dimensions.height);
+    const color = try allocator.alloc(T, @as(usize, image.dimensions.width) * image.dimensions.height);
     defer allocator.free(color);
-    const alpha = try allocator.alloc(types.Alpha1, image.dimensions.width * image.dimensions.height);
+    const alpha = try allocator.alloc(types.Alpha1, @as(usize, image.dimensions.width) * image.dimensions.height);
     defer allocator.free(alpha);
 
     try blt.blt(
@@ -554,9 +554,9 @@ fn readUncompressedToImage(
     canvas_height: usize,
     image: *Gm1Image,
 ) !void {
-    const color = try allocator.alloc(types.Argb1555, image.dimensions.width * image.dimensions.height);
+    const color = try allocator.alloc(types.Argb1555, @as(usize, image.dimensions.width) * image.dimensions.height);
     defer allocator.free(color);
-    const alpha = try allocator.alloc(types.Alpha1, image.dimensions.width * image.dimensions.height);
+    const alpha = try allocator.alloc(types.Alpha1, @as(usize, image.dimensions.width) * image.dimensions.height);
     defer allocator.free(alpha);
 
     try blt.blt(

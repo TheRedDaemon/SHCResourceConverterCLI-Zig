@@ -343,6 +343,12 @@ pub fn encode(
 // TODO: the encoding for gm1 tgx formats seems to be different than for tgx files
 // the repeat line jump count seems to not be present
 
+// TODO: the tile images contain strange repeat pixels located at the end of a line without
+// even a pixel on the next line to complete it
+// it seems that it might have actually used the following pixel of the canvas, which might either indicate
+// that the changed approach prevents a switch to this approach, or that the real result might be lost, due to
+// missing data in the result
+
 fn internalEncode(
     comptime PixelType: type,
     request: anytype,
