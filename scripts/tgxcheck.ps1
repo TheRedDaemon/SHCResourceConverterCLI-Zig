@@ -5,6 +5,7 @@ param (
   [Parameter(Mandatory = $true)][string]$Source,
   [Parameter(Mandatory = $true)][string]$Destination,
   [Parameter(Mandatory = $true)][string]$Converter,
+  [Parameter(Mandatory = $false)][string]$FileExtension = "tgx",
   [Parameter(Mandatory = $false)][string]$Suffix = ""
 )
 
@@ -26,7 +27,7 @@ function DiscoverTGXFiles {
     [Parameter(Mandatory = $true, ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)][System.IO.DirectoryInfo]$Folder
   )
   
-  Get-ChildItem -Path $Folder -Recurse -Include "*.tgx"
+  Get-ChildItem -Path $Folder -Recurse -Include "*.$($FileExtension)"
 }
 
 function ExtractTGXFile {
@@ -103,10 +104,10 @@ function RoundTripTGXFile {
   ExtractTGXFile -File $File -Folder $tgxFolder
 
   if ($Suffix -ne "") {
-    $packedFileName = "$($tgxFolder.Name)-$($Suffix).tgx"
+    $packedFileName = "$($tgxFolder.Name)-$($Suffix).$($FileExtension)"
   }
   else {
-    $packedFileName = "$($tgxFolder.Name).tgx"
+    $packedFileName = "$($tgxFolder.Name).$($FileExtension)"
   }
   
   $packedTGXFilePath = Join-Path $tgxFolder "$packedFileName"
@@ -121,7 +122,7 @@ function RoundTripTGXFile {
 
 if ($true -eq (ComparePathsEquality -A $TGXSource -B $TGXDestination)) {
   if ($Suffix -eq "") {
-    Write-Error "If Source is equal to Destination, an empty Suffix is not allowed as it would mean .tgx files are overwritten"
+    Write-Error "If Source is equal to Destination, an empty Suffix is not allowed as it would mean .$($FileExtension) files are overwritten"
     return 1
   }
 }
