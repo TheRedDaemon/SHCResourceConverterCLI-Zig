@@ -30,6 +30,8 @@ const EncoderError = error{
     OutOfMemory,
     InvalidDataSize,
     WrongPixelType,
+    InvalidCanvasSize,
+    ImageDoesNotFitCanvas,
 };
 
 /// Result of decoding
@@ -289,17 +291,25 @@ fn internalDecode(
 
 pub fn determineEncodedSize(
     comptime PixelType: type,
-    raw_tgx_stream: *const types.RawTgxStream,
-    width: u32,
-    height: u32,
+    canvas_tgx_stream: *const types.RawTgxStream,
+    canvas_width: usize,
+    canvas_height: usize,
+    image_width: usize,
+    image_height: usize,
+    image_position_x: usize,
+    image_position_y: usize,
     options: *const types.CoderOptions,
 ) EncoderError!usize {
     return switch (try internalEncode(
         PixelType,
         .{},
-        raw_tgx_stream,
-        width,
-        height,
+        canvas_tgx_stream,
+        canvas_width,
+        canvas_height,
+        image_width,
+        image_height,
+        image_position_x,
+        image_position_y,
         options,
     )) {
         .size => |size| size,
@@ -310,17 +320,25 @@ pub fn determineEncodedSize(
 pub fn encode(
     comptime PixelType: type,
     allocator: std.mem.Allocator,
-    raw_tgx_stream: *const types.RawTgxStream,
-    width: u32,
-    height: u32,
+    canvas_tgx_stream: *const types.RawTgxStream,
+    canvas_width: usize,
+    canvas_height: usize,
+    image_width: usize,
+    image_height: usize,
+    image_position_x: usize,
+    image_position_y: usize,
     options: *const types.CoderOptions,
     result_size: ?usize,
 ) EncoderError!types.EncodedTgxStream {
     const size = result_size orelse try determineEncodedSize(
         PixelType,
-        raw_tgx_stream,
-        width,
-        height,
+        canvas_tgx_stream,
+        canvas_width,
+        canvas_height,
+        image_width,
+        image_height,
+        image_position_x,
+        image_position_y,
         options,
     );
 
@@ -330,9 +348,13 @@ pub fn encode(
             .allocator = allocator,
             .size = size,
         },
-        raw_tgx_stream,
-        width,
-        height,
+        canvas_tgx_stream,
+        canvas_width,
+        canvas_height,
+        image_width,
+        image_height,
+        image_position_x,
+        image_position_y,
         options,
     )) {
         .encoded => |*data| data.*,
@@ -349,12 +371,19 @@ pub fn encode(
 // that the changed approach prevents a switch to this approach, or that the real result might be lost, due to
 // missing data in the result
 
+// TODO: is might be possible to use an "overflow lookup" for the next lines taking in the source without cutout pixels
+// would be a quick test to see if they really overscan the whole source, which would beg the question if we even have enough infos
+
 fn internalEncode(
     comptime PixelType: type,
     request: anytype,
-    raw_tgx_stream: *const types.RawTgxStream,
-    width: u32,
-    height: u32,
+    canvas_tgx_stream: *const types.RawTgxStream,
+    canvas_width: usize,
+    canvas_height: usize,
+    image_width: usize,
+    image_height: usize,
+    image_position_x: usize,
+    image_position_y: usize,
     options: *const types.CoderOptions,
 ) EncoderError!EncoderResult {
     if (PixelType != types.Argb1555 and PixelType != types.Gray8) {
@@ -380,16 +409,26 @@ fn internalEncode(
         allocator.free(data);
     };
 
-    const raw_data = try raw_tgx_stream.getRawData(PixelType);
-    const raw_transparency = raw_tgx_stream.getRawTransparency();
+    const raw_data = try canvas_tgx_stream.getRawData(PixelType);
+    const raw_transparency = canvas_tgx_stream.getRawTransparency();
+    if (raw_data.len != canvas_width * canvas_height or raw_transparency.len != canvas_width * canvas_height) {
+        return EncoderError.InvalidCanvasSize;
+    }
 
-    var source_index: usize = 0;
+    const exclusive_end_x = image_position_x + image_width;
+    const exclusive_end_y = image_position_y + image_height;
+    if (exclusive_end_x > canvas_width or exclusive_end_y > canvas_height) {
+        return EncoderError.ImageDoesNotFitCanvas;
+    }
+    const line_jump = canvas_width - image_width;
+
+    var source_index: usize = image_position_y * canvas_width + image_position_x;
     var target_index: usize = 0;
-    for (0..height) |_| {
-        var x_index: usize = 0;
-        while (x_index < width) {
+    for (image_position_y..exclusive_end_y) |_| {
+        var x_index: usize = image_position_x;
+        while (x_index < exclusive_end_x) {
             var transparent_pixel_count: usize = 0;
-            while (x_index < width and raw_transparency[source_index] == 0) // consume all transparency
+            while (x_index < exclusive_end_x and raw_transparency[source_index] == 0) // consume all transparency
             {
                 transparent_pixel_count += 1;
                 x_index += 1;
@@ -397,7 +436,7 @@ fn internalEncode(
             }
 
             // if indexed and end of the line, short circuit to newline
-            if (PixelType == types.Argb1555 or x_index < width) {
+            if (PixelType == types.Argb1555 or x_index < exclusive_end_x) {
                 while (transparent_pixel_count > max_pixel_per_marker) : (transparent_pixel_count -= max_pixel_per_marker) {
                     target_index += try writeEncodedTransparency(target_index, max_pixel_per_marker, data);
                 } else if (transparent_pixel_count > 0) {
@@ -410,18 +449,17 @@ fn internalEncode(
             var count: usize = 0;
             var repeating_pixel_count: usize = 0;
             var repeating_pixel: PixelType = undefined;
-            while (x_index < width and count < max_pixel_per_marker) {
+            while (x_index < exclusive_end_x and count < max_pixel_per_marker) {
                 if (raw_transparency[source_index] == 0) {
                     break;
                 }
                 const next_pixel = raw_data[source_index];
 
-                // count all repeating pixels that can be considered this line, but check pixels of next lines for this decision
-                // TODO?: Is there a better approach to this? This loop always starts for every single pixel, even if it is not needed
+                // count all repeating pixels that can be considered this line, but overflow pixel check
                 var repeating_count: usize = 0;
                 for (raw_data[source_index..]) |current_pixel| {
-                    if (current_pixel != next_pixel or (repeating_count + x_index >= width and repeating_count % max_pixel_per_marker >= options.pixel_repeat_threshold)) {
-                        // if the next pixel is different or we reach next line and the threshold is reached, we can stop, since the next line starts new
+                    if (current_pixel != next_pixel or (repeating_count + x_index >= exclusive_end_x and repeating_count % max_pixel_per_marker >= options.pixel_repeat_threshold)) {
+                        // if the next pixel is different or we overflow the image and the threshold is reached, we can stop, since the next line starts new
                         break;
                     }
                     repeating_count += 1;
@@ -436,7 +474,7 @@ fn internalEncode(
                 }
 
                 // always fix number of pixels extend over line, since the number is used to know how many repeated pixels to write
-                const remaining_pixel_count = width - x_index;
+                const remaining_pixel_count = exclusive_end_x - x_index;
                 repeating_pixel_count = if (remaining_pixel_count < repeating_pixel_count) remaining_pixel_count else repeating_pixel_count;
 
                 // currently based if enough repeating pixels after each other are found, but only write till the end of the line
@@ -475,6 +513,7 @@ fn internalEncode(
         }
         // line end
         target_index += try writeEncodedNewline(target_index, 1, data);
+        source_index += line_jump;
     }
 
     const reminder = target_index % options.padding_alignment;
@@ -657,6 +696,10 @@ test "test tgx decode and encode" {
         &decoding_result,
         width,
         height,
+        width,
+        height,
+        0,
+        0,
         &types.CoderOptions.default,
         null,
     );

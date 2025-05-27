@@ -123,6 +123,10 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
         &raw_tgx_stream,
         resource.tgx_header.width,
         resource.tgx_header.height,
+        resource.tgx_header.width,
+        resource.tgx_header.height,
+        0,
+        0,
         options,
         null,
     );

@@ -159,15 +159,6 @@ fn BltImageFromSource(value_type: type) type {
     });
 }
 
-fn BltMaskedImageFromSource(value_type: type) type {
-    return blt.CopyInstruction(.{
-        .value_type = value_type,
-        .source_mode = blt.SourceMode.image,
-        .position_mode = blt.PositionMode.source,
-        .target_bit_mask = true,
-    });
-}
-
 const Gm1ResourceInfo = struct {
     color_size: usize,
     alpha_size: usize,
@@ -423,6 +414,7 @@ pub fn loadFromRaw(allocator: std.mem.Allocator, directory_path: []const u8, opt
         .tiles_object => {
             while (image_index < gm1_file.gm1_header.number_of_pictures_in_file) : (image_index += 1) {
                 const image = &gm1_file.images[image_index];
+                // modifies loaded data to allow legacy image encoding
                 try readTileObjectToImage(
                     allocator,
                     std.mem.bytesAsSlice(types.Argb1555, canvas_color),
@@ -503,43 +495,17 @@ fn readGm1TgxToImage(
     image: *Gm1Image,
     options: *const types.CoderOptions,
 ) !void {
-    const color = try allocator.alloc(T, @as(usize, image.dimensions.width) * image.dimensions.height);
-    defer allocator.free(color);
-    const alpha = try allocator.alloc(types.Alpha1, @as(usize, image.dimensions.width) * image.dimensions.height);
-    defer allocator.free(alpha);
-
-    try blt.blt(
-        BltImageFromSource(T){
-            .source_image = color_canvas,
-            .source_width = canvas_width,
-            .source_height = canvas_height,
-            .target = color,
-            .target_width = image.dimensions.width,
-            .target_height = image.dimensions.height,
-            .position_x = image.dimensions.offset_x,
-            .position_y = image.dimensions.offset_y,
-        },
-    );
-    try blt.blt(
-        BltImageFromSource(types.Alpha1){
-            .source_image = alpha_canvas,
-            .source_width = canvas_width,
-            .source_height = canvas_height,
-            .target = alpha,
-            .target_width = image.dimensions.width,
-            .target_height = image.dimensions.height,
-            .position_x = image.dimensions.offset_x,
-            .position_y = image.dimensions.offset_y,
-        },
-    );
-
     image.data = .{
         .tgx = try tgx_coder.encode(
             T,
             allocator,
-            &types.RawTgxStream.take(T, color, alpha),
+            &types.RawTgxStream.take(T, color_canvas, alpha_canvas),
+            canvas_width,
+            canvas_height,
             image.dimensions.width,
             image.dimensions.height,
+            image.dimensions.offset_x,
+            image.dimensions.offset_y,
             options,
             null,
         ),
@@ -597,8 +563,8 @@ fn readUncompressedToImage(
 
 fn readTileObjectToImage(
     allocator: std.mem.Allocator,
-    color_canvas: []const types.Argb1555,
-    alpha_canvas: []const types.Alpha1,
+    color_canvas: []types.Argb1555,
+    alpha_canvas: []types.Alpha1,
     canvas_width: usize,
     canvas_height: usize,
     image: *Gm1Image,
@@ -652,68 +618,37 @@ fn readTileObjectToImage(
     // decode again to get a tile cutter for the image
     // overhead, but ok for here
     tile_coder.decode(gm_tile, &tile_color, &tile_alpha, options);
-    const image_width = image.info.tile_object.image_width;
-    const image_height = image.info.tile_object.tile_offset + tile_coder.tile_image_height_offset;
-    const x_position_image = if (image.info.tile_object.image_offset_x > 0) @as(isize, image.dimensions.offset_x) + image.info.tile_object.image_offset_x else @as(isize, image.dimensions.offset_x);
-    const y_position_image = image.dimensions.offset_y;
 
-    const color = try allocator.alloc(types.Argb1555, image_width * image_height);
-    defer allocator.free(color);
-    const alpha = try allocator.alloc(types.Alpha1, image_width * image_height);
-    defer allocator.free(alpha);
-
-    // get alpha for image
-    try blt.blt(
-        BltImageFromSource(types.Alpha1){
-            .source_image = alpha_canvas,
-            .source_width = canvas_width,
-            .source_height = canvas_height,
-            .target = alpha,
-            .target_width = image_width,
-            .target_height = image_height,
-            .position_x = x_position_image,
-            .position_y = y_position_image,
-        },
-    );
-
-    // remove tile if overlapping
-    const x_position_tile_image_relative = x_position_tile - x_position_image;
-    const y_position_tile_image_relative = y_position_tile - y_position_image;
+    // remove tile if overlapping, modifies canvas_alpha
     try blt.blt(
         BltMaskedColorToTarget(types.Alpha1){
             .source_color = 0,
             .source_width = tile_coder.tile_width,
             .source_height = tile_coder.tile_height,
-            .target = alpha,
-            .target_width = image_width,
-            .target_height = image_height,
-            .position_x = x_position_tile_image_relative,
-            .position_y = y_position_tile_image_relative,
+            .target = alpha_canvas,
+            .target_width = canvas_width,
+            .target_height = canvas_height,
+            .position_x = x_position_tile,
+            .position_y = y_position_tile,
             .source_bit_mask = &tile_alpha,
         },
     );
 
-    // get masked color for image
-    try blt.blt(
-        BltMaskedImageFromSource(types.Argb1555){
-            .source_image = color_canvas,
-            .source_width = canvas_width,
-            .source_height = canvas_height,
-            .target = color,
-            .target_width = image_width,
-            .target_height = image_height,
-            .position_x = x_position_image,
-            .position_y = y_position_image,
-            .target_bit_mask = alpha,
-        },
-    );
+    const image_width = image.info.tile_object.image_width;
+    const image_height = image.info.tile_object.tile_offset + tile_coder.tile_image_height_offset;
+    const x_position_image = if (image.info.tile_object.image_offset_x > 0) @as(usize, @intCast(@as(isize, image.dimensions.offset_x) + image.info.tile_object.image_offset_x)) else image.dimensions.offset_x;
+    const y_position_image = image.dimensions.offset_y;
 
     image.data.tile_object.image = try tgx_coder.encode(
         types.Argb1555,
         allocator,
-        &types.RawTgxStream.take(types.Argb1555, color, alpha),
+        &types.RawTgxStream.take(types.Argb1555, color_canvas, alpha_canvas),
+        canvas_width,
+        canvas_height,
         image_width,
         image_height,
+        x_position_image,
+        y_position_image,
         options,
         null,
     );
@@ -1376,12 +1311,11 @@ test "extract and pack gm1" {
     const file_name = try std.fs.path.join(std.testing.allocator, &.{ ".zig-cache", "tmp", &temp_dir.sub_path, "pack", "test.gm1" });
     defer std.testing.allocator.free(file_name);
 
-    // TODO: fix tgx coder after completing load and save
     try testExtractAndPack(test_data.gm1.tile_cliffs, dir_name, file_name);
-    //try testExtractAndPack(test_data.gm1.interface_icons2, dir_name, file_name);
-    //try testExtractAndPack(test_data.gm1.font_stronghold_aa, dir_name, file_name);
-    //try testExtractAndPack(test_data.gm1.anim_armourer, dir_name, file_name);
-    //try testExtractAndPack(test_data.gm1.tile_buildings1, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.interface_icons2, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.font_stronghold_aa, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.anim_armourer, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.tile_buildings1, dir_name, file_name);
 }
 fn testExtractAndPack(test_file: []const u8, test_out_dir: []const u8, test_in_file: []const u8) !void {
     const sha_original = try test_data.generateSha256FromFile(test_file);
