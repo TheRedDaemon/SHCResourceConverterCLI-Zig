@@ -457,8 +457,10 @@ fn internalEncode(
 
                 // count all repeating pixels that can be considered this line, but overflow pixel check
                 var repeating_count: usize = 0;
-                for (raw_data[source_index..]) |current_pixel| {
-                    if (current_pixel != next_pixel or (repeating_count + x_index >= exclusive_end_x and repeating_count % max_pixel_per_marker >= options.pixel_repeat_threshold)) {
+                for (raw_data[source_index..], raw_transparency[source_index..]) |current_pixel, current_transparency| {
+                    if (current_transparency == 0 or current_pixel != next_pixel or
+                        (repeating_count + x_index >= exclusive_end_x and repeating_count % max_pixel_per_marker >= options.pixel_repeat_threshold))
+                    {
                         // if the next pixel is different or we overflow the image and the threshold is reached, we can stop, since the next line starts new
                         break;
                     }
