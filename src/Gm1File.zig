@@ -1331,9 +1331,7 @@ test "extract and pack gm1" {
     try testExtractAndPack(test_data.gm1.interface_icons2, dir_name, file_name);
     try testExtractAndPack(test_data.gm1.font_stronghold_aa, dir_name, file_name);
     try testExtractAndPack(test_data.gm1.anim_armourer, dir_name, file_name);
-
-    // still not clear
-    //try testExtractAndPack(test_data.gm1.tile_buildings1, dir_name, file_name);
+    try testExtractAndPack(test_data.gm1.tile_buildings1, dir_name, file_name);
 }
 fn testExtractAndPack(test_file: []const u8, test_out_dir: []const u8, test_in_file: []const u8) !void {
     const sha_original = try test_data.generateSha256FromFile(test_file);
