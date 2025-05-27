@@ -617,8 +617,7 @@ fn readTileObjectToImage(
     }
     // decode again to get a tile cutter for the image
     // overhead, but ok for here
-    var tile_cutter: [tile_coder.raw_tile_size]types.Alpha1 = undefined;
-    tile_coder.decode(gm_tile, &tile_color, &tile_cutter, options);
+    tile_coder.decode(gm_tile, &tile_color, &tile_alpha, options);
 
     // remove tile if overlapping, modifies canvas_alpha
     try blt.blt(
@@ -631,7 +630,7 @@ fn readTileObjectToImage(
             .target_height = canvas_height,
             .position_x = x_position_tile,
             .position_y = y_position_tile,
-            .source_bit_mask = &tile_cutter,
+            .source_bit_mask = &tile_alpha,
         },
     );
 
@@ -652,21 +651,6 @@ fn readTileObjectToImage(
         y_position_image,
         options,
         null,
-    );
-
-    // re-add alpha tile
-    try blt.blt(
-        BltFilteredImageToTarget(types.Alpha1){
-            .source_image = &tile_alpha,
-            .source_width = tile_coder.tile_width,
-            .source_height = tile_coder.tile_height,
-            .target = alpha_canvas,
-            .target_width = canvas_width,
-            .target_height = canvas_height,
-            .position_x = x_position_tile,
-            .position_y = y_position_tile,
-            .source_ignore_value = 0,
-        },
     );
 }
 
