@@ -223,6 +223,8 @@ fn internalDecode(
                             if (pixel.a == 0) analysis.color_pixel_with_alpha_zero += 1;
                         }
                     }
+                    // TODO it might be possible that index 0x0 was used in index files for magenta and at the same time as transparency marker
+                    // if this is true, then is should not be present in the animation files
                 }
                 if (should_decode) {
                     @memcpy(
@@ -261,6 +263,8 @@ fn internalDecode(
                     if (PixelType == types.Argb1555) {
                         if (fill_color.a == 0) analysis.color_pixel_with_alpha_zero += 1;
                     }
+                    // TODO it might be possible that index 0x0 was used in index files for magenta and at the same time as transparency marker
+                    // if this is true, then is should not be present in the animation files
                 }
                 if (should_decode) {
                     @memset(pixels[target_index .. target_index + pixel_number], fill_color);
@@ -361,18 +365,6 @@ pub fn encode(
         else => @panic("Encoder performed unexpected action."),
     };
 }
-
-// TODO: the encoding for gm1 tgx formats seems to be different than for tgx files
-// the repeat line jump count seems to not be present
-
-// TODO: the tile images contain strange repeat pixels located at the end of a line without
-// even a pixel on the next line to complete it
-// it seems that it might have actually used the following pixel of the canvas, which might either indicate
-// that the changed approach prevents a switch to this approach, or that the real result might be lost, due to
-// missing data in the result
-
-// TODO: is might be possible to use an "overflow lookup" for the next lines taking in the source without cutout pixels
-// would be a quick test to see if they really overscan the whole source, which would beg the question if we even have enough infos
 
 fn internalEncode(
     comptime PixelType: type,

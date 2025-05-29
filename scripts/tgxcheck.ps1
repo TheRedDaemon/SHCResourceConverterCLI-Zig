@@ -145,7 +145,7 @@ $results = $tgxFiles | ForEach-Object {
 
 Write-Host "*** REPORT ***"
 
-$mismatches = $results | Where-Object { $_.originalHash -ne $_.roundtripHash } | ForEach-Object { return $_.original.Name }
+[array]$mismatches = $results | Where-Object { $_.originalHash -ne $_.roundtripHash } | ForEach-Object { return $_.original.Name }
 
 $mismatches | Write-Host -ForegroundColor Red
 

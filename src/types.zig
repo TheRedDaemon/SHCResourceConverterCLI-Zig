@@ -6,6 +6,8 @@ pub const CoderOptions = struct {
     transparent_pixel_tgx_color: Argb1555,
     transparent_pixel_raw_color: Argb1555,
     transparent_pixel_fill_index: Gray8,
+    grid_pixel_raw_color: Argb1555,
+    grid_pixel_fill_index: Gray8,
     pixel_repeat_threshold: u8,
     padding_alignment: u8,
 
@@ -13,6 +15,8 @@ pub const CoderOptions = struct {
         .transparent_pixel_tgx_color = @bitCast(@as(u16, 0b1111100000011111)), // used by game for some cases (repeating pixels seem excluded?)
         .transparent_pixel_raw_color = @bitCast(@as(u16, 0)), // for placing transparency and identification of it
         .transparent_pixel_fill_index = 0, // for placing an index in the the raw output
+        .grid_pixel_raw_color = @bitCast(@as(u16, 0b1000000000000000)), // was likely used to represent a grid for certain types
+        .grid_pixel_fill_index = 1, // was likely used to represent a grid
         .pixel_repeat_threshold = 3,
         .padding_alignment = 4,
     };

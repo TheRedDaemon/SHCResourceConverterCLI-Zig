@@ -124,6 +124,14 @@ fn BltImageToTarget(value_type: type) type {
     });
 }
 
+fn BltColorToTarget(value_type: type) type {
+    return blt.CopyInstruction(.{
+        .value_type = value_type,
+        .source_mode = blt.SourceMode.color,
+        .position_mode = blt.PositionMode.target,
+    });
+}
+
 fn BltFilteredImageToTarget(value_type: type) type {
     return blt.CopyInstruction(.{
         .value_type = value_type,
@@ -764,6 +772,109 @@ pub fn saveAsRaw(self: *const Self, allocator: std.mem.Allocator, directory_path
     switch (self.gm1_header.gm1_type) {
         .animations => @memset(canvas_color, options.transparent_pixel_fill_index),
         else => @memset(std.mem.bytesAsSlice(types.Argb1555, canvas_color), options.transparent_pixel_raw_color),
+    }
+
+    // handle grid fill (currently of overdraws the initial fill)
+    // assuming 1 as grid size, since it is unknown, if one of the header values indicates this
+    switch (self.gm1_header.gm1_type) {
+        .animations, .tgx_const_size => {
+            const image_width_with_grid = self.gm1_header.width + 1;
+            const image_height_with_grid = self.gm1_header.height + 1;
+
+            var current_grid_index_x = @as(isize, self.gm1_header.width);
+            while (current_grid_index_x < canvas_width - 1) : (current_grid_index_x += image_width_with_grid) {
+                switch (self.gm1_header.gm1_type) {
+                    .animations => {
+                        try blt.blt(
+                            BltColorToTarget(types.Gray8){
+                                .source_color = options.grid_pixel_fill_index,
+                                .source_width = 1,
+                                .source_height = canvas_height,
+                                .target = canvas_color,
+                                .target_width = canvas_width,
+                                .target_height = canvas_height,
+                                .position_x = current_grid_index_x,
+                                .position_y = 0,
+                            },
+                        );
+                    },
+                    .tgx_const_size => {
+                        try blt.blt(
+                            BltColorToTarget(types.Argb1555){
+                                .source_color = options.grid_pixel_raw_color,
+                                .source_width = 1,
+                                .source_height = canvas_height,
+                                .target = std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                                .target_width = canvas_width,
+                                .target_height = canvas_height,
+                                .position_x = current_grid_index_x,
+                                .position_y = 0,
+                            },
+                        );
+                    },
+                    else => unreachable,
+                }
+                try blt.blt(
+                    BltColorToTarget(types.Alpha1){
+                        .source_color = 1,
+                        .source_width = 1,
+                        .source_height = canvas_height,
+                        .target = canvas_alpha,
+                        .target_width = canvas_width,
+                        .target_height = canvas_height,
+                        .position_x = current_grid_index_x,
+                        .position_y = 0,
+                    },
+                );
+            }
+            var current_grid_index_y = @as(isize, self.gm1_header.height);
+            while (current_grid_index_y < canvas_height - 1) : (current_grid_index_y += image_height_with_grid) {
+                switch (self.gm1_header.gm1_type) {
+                    .animations => {
+                        try blt.blt(
+                            BltColorToTarget(types.Gray8){
+                                .source_color = options.grid_pixel_fill_index,
+                                .source_width = canvas_width,
+                                .source_height = 1,
+                                .target = canvas_color,
+                                .target_width = canvas_width,
+                                .target_height = canvas_height,
+                                .position_x = 0,
+                                .position_y = current_grid_index_y,
+                            },
+                        );
+                    },
+                    .tgx_const_size => {
+                        try blt.blt(
+                            BltColorToTarget(types.Argb1555){
+                                .source_color = options.grid_pixel_raw_color,
+                                .source_width = canvas_width,
+                                .source_height = 1,
+                                .target = std.mem.bytesAsSlice(types.Argb1555, canvas_color),
+                                .target_width = canvas_width,
+                                .target_height = canvas_height,
+                                .position_x = 0,
+                                .position_y = current_grid_index_y,
+                            },
+                        );
+                    },
+                    else => unreachable,
+                }
+                try blt.blt(
+                    BltColorToTarget(types.Alpha1){
+                        .source_color = 1,
+                        .source_width = canvas_width,
+                        .source_height = 1,
+                        .target = canvas_alpha,
+                        .target_width = canvas_width,
+                        .target_height = canvas_height,
+                        .position_x = 0,
+                        .position_y = current_grid_index_y,
+                    },
+                );
+            }
+        },
+        else => {},
     }
 
     switch (self.gm1_header.gm1_type) {

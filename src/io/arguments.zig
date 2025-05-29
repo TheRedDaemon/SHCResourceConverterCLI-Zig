@@ -37,6 +37,8 @@ const main_params = clap.parseParamsComptime(std.fmt.comptimePrint(
     \\--transparent-pixel-tgx-color <argb1555>  Transparent pixel color used the TGX encoding. Unknown usage. (default: 0b1111100000011111)
     \\--transparent-pixel-raw-color <argb1555>  Transparent pixel color used for alpha in raw data. (default: 0)
     \\--transparent-pixel-fill-index <u8>  Color index used for index images if the pixel is transparent. (default: 0)
+    \\--grid-pixel-raw-color <argb1555>  Pixel color used to draw a grid in raw data for certain types. (default: 0b1000000000000000)
+    \\--grid-pixel-fill-index <u8>  Color index used for index images to fill a grid for certain types. (default: 0)
     \\--pixel-repeat-threshold <threshold>  Number of repeated pixels required to be considered a repeat. (default: 3)
     \\--padding-alignment <u8>  Byte alignment to use for the padding. (default: 4)
     \\<command>  Actual action to perform. Possible values: {s}
@@ -129,6 +131,8 @@ fn internalParseArgs(allocator: std.mem.Allocator, arg_iterator_ptr: anytype) !P
                 .transparent_pixel_tgx_color = res.args.@"transparent-pixel-tgx-color" orelse types.CoderOptions.default.transparent_pixel_tgx_color,
                 .transparent_pixel_raw_color = res.args.@"transparent-pixel-raw-color" orelse types.CoderOptions.default.transparent_pixel_raw_color,
                 .transparent_pixel_fill_index = res.args.@"transparent-pixel-fill-index" orelse types.CoderOptions.default.transparent_pixel_fill_index,
+                .grid_pixel_raw_color = res.args.@"grid-pixel-raw-color" orelse types.CoderOptions.default.grid_pixel_raw_color,
+                .grid_pixel_fill_index = res.args.@"grid-pixel-fill-index" orelse types.CoderOptions.default.grid_pixel_fill_index,
                 .pixel_repeat_threshold = res.args.@"pixel-repeat-threshold" orelse types.CoderOptions.default.pixel_repeat_threshold,
                 .padding_alignment = res.args.@"padding-alignment" orelse types.CoderOptions.default.padding_alignment,
             },
