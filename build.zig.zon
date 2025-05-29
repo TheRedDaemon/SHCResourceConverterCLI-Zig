@@ -1,6 +1,6 @@
 .{
     .name = .shc_resource_converter_cli,
-    .version = "0.1.0",
+    .version = "1.0.0",
     .fingerprint = 0x88adb0af51445a49, // Changing this has security and trust implications.
 
     .minimum_zig_version = "0.14.0",
